@@ -2,17 +2,9 @@
 
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import {
-  Home,
-  Users,
-  HardDrive,
-  DollarSign,
-  Settings,
-  LogOut,
-  ShoppingCart,
-} from 'lucide-react'
-import { createClient } from '@supabase/supabase-js'
-import styles from './sidebar.module.css'
+import { Home, Users, HardDrive, DollarSign, Settings, LogOut, ShoppingCart } from 'lucide-react'
+import { auth } from '@/lib/firebaseConfig'
+import { signOut } from 'firebase/auth'
 
 const menuItems = [
   { icon: Home, label: 'Dashboard', href: '/' },
@@ -23,42 +15,25 @@ const menuItems = [
   { icon: Settings, label: 'Settings', href: '/settings' },
 ]
 
-// Initialize Supabase client
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
-
 export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
 
   const handleLogout = async () => {
     try {
-      // Sign out the user
-      const { error } = await supabase.auth.signOut()
-
-      if (error) {
-        console.error('Error signing out:', error.message)
-        return
-      }
-
-      // Clear session data and redirect to login
+      await signOut(auth)
       router.push('/login')
-    } catch (err) {
-      console.error('Unexpected error during logout:', err)
+    } catch (error) {
+      console.error('Error signing out:', error)
     }
   }
 
   return (
-    <div className="w-64 bg-gradient-to-b from-blue-600 to-blue-800 h-screen shadow-lg flex flex-col fixed left-0 top-0">
-      {/* Sidebar Header */}
+    <div className="w-64 bg-gradient-to-b from-blue-600 to-blue-800 h-screen shadow-lg flex flex-col">
       <div className="flex items-center justify-center h-16 border-b border-blue-500">
         <h1 className="text-xl font-semibold text-white">Admin Dashboard</h1>
       </div>
-
-      {/* Navigation Menu */}
-      <nav className={`flex-grow overflow-y-auto ${styles.customScrollbar}`}>
+      <nav className="flex-grow overflow-y-auto">
         {menuItems.map((item) => (
           <Link
             key={item.href}
@@ -72,8 +47,6 @@ export function Sidebar() {
           </Link>
         ))}
       </nav>
-
-      {/* Logout Button */}
       <div className="p-4">
         <button
           onClick={handleLogout}
@@ -86,3 +59,4 @@ export function Sidebar() {
     </div>
   )
 }
+
