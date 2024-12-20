@@ -1,6 +1,3 @@
-//app/admin/orders/page.tsx
-
-
 'use client';
 
 import React, { useEffect, useState } from 'react';
@@ -10,10 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Search, Trash2, Eye } from 'lucide-react';
-import { toast } from '@/hooks/use-toast';
+import { Search, Trash2, Eye, AlertTriangle, X } from 'lucide-react';
+import { ToastContainer, toast } from 'react-toastify';
+import 'react-toastify/dist/ReactToastify.css';
 import Modal from '@/components/ui/modal';
 import { useRouter } from 'next/navigation';
+import { Checkbox } from '@/components/ui/checkbox';
+import { ToastContentProps } from 'react-toastify';
 
 interface Order {
   id: string;
@@ -37,6 +37,11 @@ interface Order {
   referredBy?: string | null;
 }
 
+interface DeleteConfirmation {
+  orderId: string;
+  confirmed: boolean;
+}
+
 export default function AdminOrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([]);
@@ -45,7 +50,55 @@ export default function AdminOrdersPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null);
   const router = useRouter();
+
+  const CustomToast = ({ closeToast, orderId }: { closeToast: ToastContentProps['closeToast']; orderId: string }) => (
+    <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full mx-auto">
+      <div className="flex items-center mb-4">
+        <AlertTriangle className="text-yellow-500 mr-2" size={24} />
+        <h3 className="text-lg font-semibold">Confirm Deletion</h3>
+      </div>
+      <p className="mb-4">Are you sure you want to delete this order?</p>
+      <div className="flex items-center mb-4">
+        <Checkbox
+          id="confirmDelete"
+          checked={deleteConfirmation?.confirmed || false}
+          onCheckedChange={(checked) => {
+            setDeleteConfirmation(prev => prev ? { ...prev, confirmed: checked as boolean } : null);
+            setFilteredOrders([...filteredOrders]);
+          }}
+        />
+        <label htmlFor="confirmDelete" className="ml-2 text-sm">
+          I confirm that I want to delete this order
+        </label>
+      </div>
+      <div className="flex justify-end space-x-2">
+        <Button variant="outline" onClick={() => {
+          setDeleteConfirmation(null);
+          closeToast();
+        }}>
+          Cancel
+        </Button>
+        <Button
+          onClick={() => {
+            confirmDeleteOrder(orderId);
+            closeToast();
+          }}
+          disabled={!deleteConfirmation?.confirmed}
+          className="bg-red-500 text-white hover:bg-red-600"
+        >
+          Delete
+        </Button>
+      </div>
+      <button
+        onClick={closeToast}
+        className="absolute top-2 right-2 text-gray-400 hover:text-gray-600"
+      >
+        <X size={18} />
+      </button>
+    </div>
+  );
 
   useEffect(() => {
     const fetchOrders = async () => {
@@ -61,10 +114,14 @@ export default function AdminOrdersPage() {
         setFilteredOrders(fetchedOrders);
       } catch (error) {
         console.error('Failed to fetch orders:', error);
-        toast({
-          title: 'Error',
-          description: 'Failed to load orders.',
-          variant: 'destructive',
+        toast.error('Failed to load orders.', {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          progress: undefined,
         });
       } finally {
         setIsLoading(false);
@@ -96,7 +153,31 @@ export default function AdminOrdersPage() {
     }
   };
 
-  const handleDeleteOrder = async (orderId: string) => {
+  const handleDeleteOrder = (orderId: string) => {
+    setDeleteConfirmation({ orderId, confirmed: false });
+    toast.warn(
+      ({ closeToast }: ToastContentProps) => (
+        <CustomToast
+          closeToast={closeToast}
+          orderId={orderId}
+        />
+      ),
+      {
+        position: "top-center",
+        autoClose: false,
+        hideProgressBar: true,
+        closeOnClick: false,
+        pauseOnHover: true,
+        draggable: false,
+        progress: undefined,
+        closeButton: false,
+      }
+    );
+  };
+
+  const confirmDeleteOrder = async (orderId: string) => {
+    if (!deleteConfirmation?.confirmed) return;
+
     try {
       const orderDoc = doc(db, 'orders', orderId);
       await deleteDoc(orderDoc);
@@ -104,17 +185,28 @@ export default function AdminOrdersPage() {
       setOrders(orders.filter((order) => order.id !== orderId));
       setFilteredOrders(filteredOrders.filter((order) => order.id !== orderId));
 
-      toast({
-        title: 'Success',
-        description: 'Order deleted successfully.',
+      toast.success('Order deleted successfully.', {
+        position: "top-right",
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
       });
     } catch (error) {
       console.error('Failed to delete order:', error);
-      toast({
-        title: 'Error',
-        description: 'Failed to delete order.',
-        variant: 'destructive',
+      toast.error('Failed to delete order.', {
+        position: "top-right",
+        autoClose: 3000,
+        hideProgressBar: false,
+        closeOnClick: true,
+        pauseOnHover: true,
+        draggable: true,
+        progress: undefined,
       });
+    } finally {
+      setDeleteConfirmation(null);
     }
   };
 
@@ -142,6 +234,7 @@ export default function AdminOrdersPage() {
 
   return (
     <div className="container mx-auto px-4 py-6">
+      <ToastContainer />
       <h1 className="text-3xl font-bold mb-6">All User Orders</h1>
 
       <div className="mb-4 flex gap-4 items-center">
