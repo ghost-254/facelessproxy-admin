@@ -59,6 +59,7 @@ export default function FulfillOrderPage() {
   const [locationToDelete, setLocationToDelete] = useState<number | null>(null);
   const [fulfillDialogOpen, setFulfillDialogOpen] = useState(false);
   const [fulfillConfirmed, setFulfillConfirmed] = useState(false);
+  const [updatedGbAmount, setUpdatedGbAmount] = useState<number | ''>('');
 
   useEffect(() => {
     const fetchOrder = async () => {
@@ -69,6 +70,7 @@ export default function FulfillOrderPage() {
         if (orderDoc.exists()) {
           const orderData = orderDoc.data() as Order;
           setOrder({ ...orderData, id: orderDoc.id });
+          setUpdatedGbAmount(orderData.gbAmount);
           
           // Initialize proxy details for each location, using existing details if available
           const initialProxyDetails: { [key: string]: ProxyDetails } = {};
@@ -146,9 +148,8 @@ export default function FulfillOrderPage() {
         proxyDetails: proxyDetails,
         fulfilledAt: new Date().toISOString(),
         locations: order.locations,
+        gbAmount: updatedGbAmount,
       });
-
-      // TODO: Implement logic to top up user's account with GB amount
 
       toast({
         title: 'Success',
@@ -226,6 +227,11 @@ export default function FulfillOrderPage() {
     setNewLocation(prev => ({ ...prev, [field]: value }));
   };
 
+  const handleGbAmountChange = (value: string) => {
+    const numValue = parseFloat(value);
+    setUpdatedGbAmount(isNaN(numValue) ? '' : numValue);
+  };
+
   if (isLoading) {
     return <div>Loading...</div>;
   }
@@ -255,7 +261,17 @@ export default function FulfillOrderPage() {
               </TableRow>
               <TableRow>
                 <TableCell className="font-medium">GB Amount</TableCell>
-                <TableCell>{order.gbAmount} GB</TableCell>
+                <TableCell>
+                  <div className="flex items-center space-x-2">
+                    <Input
+                      type="number"
+                      value={updatedGbAmount}
+                      onChange={(e) => handleGbAmountChange(e.target.value)}
+                      className="w-24"
+                    />
+                    <span>GB</span>
+                  </div>
+                </TableCell>
               </TableRow>
               <TableRow>
                 <TableCell className="font-medium">Payment Option</TableCell>
@@ -449,7 +465,7 @@ export default function FulfillOrderPage() {
           <div className="space-y-4">
             <p><strong>Order ID:</strong> {order.id}</p>
             <p><strong>Product:</strong> {order.proxyType}</p>
-            <p><strong>GB Amount:</strong> {order.gbAmount} GB</p>
+            <p><strong>GB Amount:</strong> {updatedGbAmount} GB</p>
             <p><strong>Total Price:</strong> ${order.totalPrice.toFixed(2)}</p>
             <p><strong>Locations:</strong> {order.locations.length}</p>
           </div>
