@@ -50,11 +50,11 @@ interface Order {
   proxyList?: string[]
 }
 
-const SOCKS5_PORTS = ['10000', '10001', '10002', '10003', '10004', '10005', '10006', '10007', '10008']
-const HTTP_HTTPS_PORTS = ['10000', '10001', '10002', '10003', '10004', '10005', '10006', '10007', '10008']
+const SOCKS5_PORTS = ['12324', '15324', '22326', '22324', '22325','10324', '11324', '13324', '14324'] 
+const HTTP_HTTPS_PORTS = ['12323', '10323', '11323', '12325', '12326', '13323', '14323', '15323', '22323']
 
 export default function FulfillSpecialProxyOrder() {
-  const router = useRouter()
+  const router = useRouter()                                                                                                                                                             
   const searchParams = useSearchParams()
   const orderId = searchParams.get('id')
 
