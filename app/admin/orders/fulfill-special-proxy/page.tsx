@@ -1,39 +1,17 @@
-'use client'
+"use client"
 
 import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from 'next/navigation'
-import { doc, getDoc, updateDoc } from 'firebase/firestore'
-import { db } from '@/lib/firebaseConfig'
-import { Save } from 'lucide-react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { useRouter, useSearchParams } from "next/navigation"
+import { doc, getDoc, updateDoc } from "firebase/firestore"
+import { db } from "@/lib/firebaseConfig"
+import { Save, Plus, X } from "lucide-react"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  Alert,
-  AlertDescription,
-} from "@/components/ui/alert"
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { toast } from "@/hooks/use-toast"
 
 interface Order {
@@ -50,13 +28,41 @@ interface Order {
   proxyList?: string[]
 }
 
-const SOCKS5_PORTS = ['12324', '15324', '22326', '7777', '22324', '22325','10324', '11324', '13324', '14324'] 
-const HTTP_HTTPS_PORTS = ['12323', '10323', '11323', '7777', '12325', '12326', '13323', '14323', '15323', '22323']
+const SOCKS5_PORTS = [
+  "12324",
+  "63267",
+  "63331",
+  "63561",
+  "15324",
+  "22326",
+  "7777",
+  "22324",
+  "22325",
+  "10324",
+  "11324",
+  "13324",
+  "14324",
+]
+const HTTP_HTTPS_PORTS = [
+  "12323",
+  "63330",
+  "63266",
+  "63560",
+  "10323",
+  "11323",
+  "7777",
+  "12325",
+  "12326",
+  "13323",
+  "14323",
+  "15323",
+  "22323",
+]
 
 export default function FulfillSpecialProxyOrder() {
-  const router = useRouter()                                                                                                                                                             
+  const router = useRouter()
   const searchParams = useSearchParams()
-  const orderId = searchParams.get('id')
+  const orderId = searchParams.get("id")
 
   const [order, setOrder] = useState<Order | null>(null)
   const [proxyList, setProxyList] = useState<string[]>([])
@@ -66,6 +72,8 @@ export default function FulfillSpecialProxyOrder() {
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [protocol, setProtocol] = useState("SOCKS5")
+  const [customPorts, setCustomPorts] = useState<string[]>([])
+  const [newCustomPort, setNewCustomPort] = useState("")
 
   useEffect(() => {
     const fetchOrderDetails = async () => {
@@ -74,73 +82,121 @@ export default function FulfillSpecialProxyOrder() {
           title: "Error",
           description: "No order ID provided",
           variant: "destructive",
-        });
-        router.push('/admin/orders');
-        return;
+        })
+        router.push("/admin/orders")
+        return
       }
 
-      setIsLoading(true);
+      setIsLoading(true)
       try {
-        const orderDoc = await getDoc(doc(db, 'orders', orderId));
+        const orderDoc = await getDoc(doc(db, "orders", orderId))
         if (orderDoc.exists()) {
-          const orderData = orderDoc.data() as Order;
+          const orderData = orderDoc.data() as Order
           if (!orderData.isSpecialProxy) {
             toast({
               title: "Error",
               description: "This is not a special proxy order",
               variant: "destructive",
-            });
-            router.push('/admin/orders');
-            return;
+            })
+            router.push("/admin/orders")
+            return
           }
-          setOrder({ ...orderData, id: orderDoc.id });
-          setProxyList(orderData.proxyList || []);
+          setOrder({ ...orderData, id: orderDoc.id })
+          setProxyList(orderData.proxyList || [])
         } else {
           toast({
             title: "Error",
             description: "Order not found",
             variant: "destructive",
-          });
-          router.push('/admin/orders');
+          })
+          router.push("/admin/orders")
         }
       } catch (error) {
-        console.error("Error fetching order:", error);
+        console.error("Error fetching order:", error)
         toast({
           title: "Error",
           description: "Failed to load order details",
           variant: "destructive",
-        });
-        router.push('/admin/orders');
+        })
+        router.push("/admin/orders")
       } finally {
-        setIsLoading(false);
+        setIsLoading(false)
       }
-    };
+    }
 
-    fetchOrderDetails();
-  }, [orderId, router]);
+    fetchOrderDetails()
+  }, [orderId, router])
 
   useEffect(() => {
     // Set default port when protocol changes
-    if (protocol === 'SOCKS5') {
-      setPort(SOCKS5_PORTS[0]);
+    if (protocol === "SOCKS5") {
+      setPort(SOCKS5_PORTS[0])
     } else {
-      setPort(HTTP_HTTPS_PORTS[0]);
+      setPort(HTTP_HTTPS_PORTS[0])
     }
-  }, [protocol]);
+  }, [protocol])
+
+  const handleAddCustomPort = () => {
+    if (!newCustomPort.trim()) {
+      toast({
+        title: "Error",
+        description: "Please enter a valid port number",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Validate port is a number between 0 and 65535
+    const portNum = Number.parseInt(newCustomPort)
+    if (isNaN(portNum) || portNum < 0 || portNum > 65535) {
+      toast({
+        title: "Error",
+        description: "Port must be a number between 0 and 65535",
+        variant: "destructive",
+      })
+      return
+    }
+
+    // Check if port already exists
+    const allPorts = [...SOCKS5_PORTS, ...HTTP_HTTPS_PORTS, ...customPorts]
+    if (allPorts.includes(newCustomPort)) {
+      toast({
+        title: "Error",
+        description: "This port already exists",
+        variant: "destructive",
+      })
+      return
+    }
+
+    setCustomPorts([...customPorts, newCustomPort])
+    setNewCustomPort("")
+    toast({
+      title: "Success",
+      description: `Port ${newCustomPort} added successfully`,
+    })
+  }
+
+  const handleRemoveCustomPort = (portToRemove: string) => {
+    setCustomPorts(customPorts.filter((p) => p !== portToRemove))
+    toast({
+      title: "Removed",
+      description: `Port ${portToRemove} has been removed`,
+    })
+  }
 
   const handleAddProxy = () => {
     if (host && port && username && password) {
-      const newProxy = `${protocol}://${username}:${password}@${host}:${port}`;
-      setProxyList([...proxyList, newProxy]);
-      setHost("");
-      setUsername("");
-      setPassword("");
+      const newProxy = `${protocol}://${username}:${password}@${host}:${port}`
+      setProxyList([...proxyList, newProxy])
+      setHost("")
+      setUsername("")
+      setPassword("")
     } else {
       toast({
         title: "Error",
         description: "Please fill in all proxy details",
         variant: "destructive",
-      });
+      })
     }
   }
 
@@ -153,7 +209,7 @@ export default function FulfillSpecialProxyOrder() {
 
     setIsLoading(true)
     try {
-      const orderRef = doc(db, 'orders', order.id)
+      const orderRef = doc(db, "orders", order.id)
       await updateDoc(orderRef, {
         status: "Fulfilled",
         proxyList: proxyList,
@@ -164,7 +220,7 @@ export default function FulfillSpecialProxyOrder() {
         description: `Order ${order.id} has been successfully fulfilled.`,
       })
 
-      router.push('/admin/orders')
+      router.push("/admin/orders")
     } catch (error) {
       console.error("Error updating order:", error)
       toast({
@@ -177,6 +233,9 @@ export default function FulfillSpecialProxyOrder() {
     }
   }
 
+  const availablePorts =
+    protocol === "SOCKS5" ? [...SOCKS5_PORTS, ...customPorts] : [...HTTP_HTTPS_PORTS, ...customPorts]
+
   if (isLoading) {
     return <div>Loading...</div>
   }
@@ -188,7 +247,7 @@ export default function FulfillSpecialProxyOrder() {
   return (
     <div className="space-y-6">
       <h1 className="text-3xl font-bold">Fulfill Special Proxy Order</h1>
-      
+
       {/* Order Details */}
       <Card>
         <CardHeader>
@@ -231,6 +290,51 @@ export default function FulfillSpecialProxyOrder() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Custom Ports</CardTitle>
+          <CardDescription>Add additional ports beyond the predefined options</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <Input
+              placeholder="Enter port number (0-6553500000)"
+              value={newCustomPort}
+              onChange={(e) => setNewCustomPort(e.target.value)}
+              type="number"
+              min="0"
+              max="65535000000"
+            />
+            <Button onClick={handleAddCustomPort} className="flex items-center gap-2">
+              <Plus className="h-4 w-4" />
+              Add Port
+            </Button>
+          </div>
+
+          {customPorts.length > 0 && (
+            <div className="border rounded-lg p-4 bg-slate-50">
+              <p className="text-sm font-medium mb-2">Active Custom Ports:</p>
+              <div className="flex flex-wrap gap-2">
+                {customPorts.map((customPort) => (
+                  <div
+                    key={customPort}
+                    className="bg-white border border-gray-200 rounded px-3 py-1 flex items-center gap-2"
+                  >
+                    <span className="text-sm">{customPort}</span>
+                    <button
+                      onClick={() => handleRemoveCustomPort(customPort)}
+                      className="text-red-500 hover:text-red-700"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Proxy List Management */}
       <Card>
         <CardHeader>
@@ -253,21 +357,15 @@ export default function FulfillSpecialProxyOrder() {
                 <SelectValue placeholder="Select port" />
               </SelectTrigger>
               <SelectContent>
-                {(protocol === 'SOCKS5' ? SOCKS5_PORTS : HTTP_HTTPS_PORTS).map((p) => (
-                  <SelectItem key={p} value={p}>{p}</SelectItem>
+                {availablePorts.map((p) => (
+                  <SelectItem key={p} value={p}>
+                    {p}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            <Input
-              placeholder="Host"
-              value={host}
-              onChange={(e) => setHost(e.target.value)}
-            />
-            <Input
-              placeholder="Username"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-            />
+            <Input placeholder="Host" value={host} onChange={(e) => setHost(e.target.value)} />
+            <Input placeholder="Username" value={username} onChange={(e) => setUsername(e.target.value)} />
             <Input
               placeholder="Password"
               value={password}
@@ -278,12 +376,7 @@ export default function FulfillSpecialProxyOrder() {
 
           <Button onClick={handleAddProxy}>Add Proxy</Button>
 
-          <Textarea
-            className="font-mono"
-            value={proxyList.join('\n')}
-            readOnly
-            rows={4}
-          />
+          <Textarea className="font-mono" value={proxyList.join("\n")} readOnly rows={4} />
 
           <Table>
             <TableHeader>
@@ -297,7 +390,9 @@ export default function FulfillSpecialProxyOrder() {
                 <TableRow key={index}>
                   <TableCell>{proxy}</TableCell>
                   <TableCell>
-                    <Button variant="destructive" onClick={() => handleRemoveProxy(index)}>Remove</Button>
+                    <Button variant="destructive" onClick={() => handleRemoveProxy(index)}>
+                      Remove
+                    </Button>
                   </TableCell>
                 </TableRow>
               ))}

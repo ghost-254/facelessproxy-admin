@@ -9,7 +9,7 @@ interface AuthWrapperProps {
   children: React.ReactNode
 }
 
-const publicRoutes = ['/login', '/signup', '/forgot-password']
+const publicRoutes = ['/login', '/forgot-password']
 
 export default function AuthWrapper({ children }: AuthWrapperProps) {
   const [user, setUser] = useState<User | null>(null)
