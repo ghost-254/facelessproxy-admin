@@ -15,13 +15,35 @@ import { useRouter } from "next/navigation"
 import { Checkbox } from "@/components/ui/checkbox"
 import type { ToastContentProps } from "react-toastify"
 
+interface OrderDetails {
+  proxyType: string
+  isSpecialProxy: boolean
+  location?: string
+  duration?: string
+  quantity?: number
+  gbAmount?: number
+  additionalGb?: number
+  selectedTier?: {
+    gb: number
+    price: number
+    discount?: string
+  }
+  paymentOption?: "subscription" | "onetime"
+  totalPrice: number
+  locations?: any[]
+}
+
 interface Order {
   id: string
   status: string
   createdAt: string
-  proxyType: string
   paymentMethod: string
-  totalPrice: number
+  totalAmount: number
+  paymentStatus?: string
+  orderDetails?: OrderDetails
+  // For backward compatibility with non-Visa orders
+  proxyType?: string
+  totalPrice?: number
   location?: string
   duration?: string
   proxyCount?: number
@@ -35,6 +57,7 @@ interface Order {
   }
   paymentOption?: string
   referredBy?: string | null
+  dodoProductId?: string
 }
 
 interface DeleteConfirmation {
@@ -112,10 +135,17 @@ export default function AdminOrdersPage() {
       try {
         const ordersCollection = collection(db, "orders")
         const snapshot = await getDocs(ordersCollection)
-        const fetchedOrders = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        })) as Order[]
+        const fetchedOrders = snapshot.docs.map((doc) => {
+          const data = doc.data()
+          return {
+            id: doc.id,
+            ...data,
+            // For Visa orders, extract proxyType from orderDetails
+            proxyType: data.orderDetails?.proxyType || data.proxyType,
+            // For Visa orders, use paymentStatus; for others, use status
+            status: data.paymentStatus || data.status || "unknown",
+          } as Order
+        })
         setOrders(fetchedOrders)
         setFilteredOrders(fetchedOrders)
 
@@ -147,15 +177,12 @@ export default function AdminOrdersPage() {
       const matchesSearch = order.id.toLowerCase().includes(searchTerm.toLowerCase())
       const matchesStatus = statusFilter === "all" || order.status === statusFilter
 
-      // Date range filtering
       const orderDate = new Date(order.createdAt)
       const matchesDateFrom = !dateFromFilter || orderDate >= new Date(dateFromFilter)
       const matchesDateTo = !dateToFilter || orderDate <= new Date(dateToFilter + "T23:59:59")
 
-      // Payment method filtering
       const matchesPaymentMethod = paymentMethodFilter === "all" || order.paymentMethod === paymentMethodFilter
 
-      // Product type filtering
       const matchesProductType = productTypeFilter === "all" || order.proxyType === productTypeFilter
 
       return (
@@ -238,7 +265,8 @@ export default function AdminOrdersPage() {
   }
 
   const handleFulfillOrder = (order: Order) => {
-    if (order.isSpecialProxy) {
+    const isSpecial = order.orderDetails?.isSpecialProxy || order.isSpecialProxy
+    if (isSpecial) {
       router.push(`/admin/orders/fulfill-special-proxy?id=${order.id}`)
     } else {
       router.push(`/admin/orders/fulfill-order?id=${order.id}`)
@@ -360,7 +388,9 @@ export default function AdminOrdersPage() {
               <tr key={order.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{order.id}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">{order.proxyType}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">${order.totalPrice?.toFixed(2) ?? "N/A"}</td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  ${(order.totalAmount || order.totalPrice || 0).toFixed(2)}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   {new Date(order.createdAt).toLocaleDateString()}
                 </td>
@@ -391,7 +421,7 @@ export default function AdminOrdersPage() {
 
       {showModal && selectedOrder && (
         <Modal isOpen={showModal} onClose={closeModal} title="Order Details">
-          <div className="space-y-2">
+          <div className="space-y-2 max-h-96 overflow-y-auto">
             <p>
               <strong>Order ID:</strong> {selectedOrder.id}
             </p>
@@ -399,7 +429,7 @@ export default function AdminOrdersPage() {
               <strong>Product Type:</strong> {selectedOrder.proxyType}
             </p>
             <p>
-              <strong>Total Price:</strong> ${selectedOrder.totalPrice ? selectedOrder.totalPrice.toFixed(2) : "N/A"}
+              <strong>Total Price:</strong> ${(selectedOrder.totalAmount || selectedOrder.totalPrice || 0).toFixed(2)}
             </p>
             <p>
               <strong>Date:</strong> {new Date(selectedOrder.createdAt).toLocaleDateString()}
@@ -410,35 +440,85 @@ export default function AdminOrdersPage() {
             <p>
               <strong>Payment Method:</strong> {selectedOrder.paymentMethod}
             </p>
-            {selectedOrder.isSpecialProxy ? (
+
+            {selectedOrder.paymentMethod === "visa" && selectedOrder.orderDetails ? (
               <>
-                <p>
-                  <strong>Location:</strong> {selectedOrder.location}
-                </p>
-                <p>
-                  <strong>Duration:</strong> {selectedOrder.duration}
-                </p>
-                <p>
-                  <strong>Proxy Count:</strong> {selectedOrder.proxyCount}
-                </p>
+                <hr className="my-3" />
+                <p className="font-semibold text-gray-700">Visa Order Details:</p>
+                {selectedOrder.orderDetails.isSpecialProxy ? (
+                  <>
+                    <p>
+                      <strong>Location:</strong> {selectedOrder.orderDetails.location || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Duration:</strong> {selectedOrder.orderDetails.duration || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Proxy Count:</strong> {selectedOrder.orderDetails.quantity || "N/A"}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      <strong>GB Amount:</strong> {selectedOrder.orderDetails.gbAmount || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Additional GB:</strong> {selectedOrder.orderDetails.additionalGb || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Selected Tier:</strong>{" "}
+                      {selectedOrder.orderDetails.selectedTier
+                        ? `${selectedOrder.orderDetails.selectedTier.gb}GB - $${selectedOrder.orderDetails.selectedTier.price}/GB`
+                        : "N/A"}
+                    </p>
+                    <p>
+                      <strong>Payment Option:</strong> {selectedOrder.orderDetails.paymentOption || "N/A"}
+                    </p>
+                  </>
+                )}
+                {selectedOrder.dodoProductId && (
+                  <p>
+                    <strong>DodoPayments Product ID:</strong> {selectedOrder.dodoProductId}
+                  </p>
+                )}
               </>
             ) : (
               <>
-                <p>
-                  <strong>GB Amount:</strong> {selectedOrder.gbAmount}
-                </p>
-                <p>
-                  <strong>Additional GB:</strong> {selectedOrder.additionalGb}
-                </p>
-                <p>
-                  <strong>Selected Tier:</strong> {selectedOrder.selectedTier?.gb}GB - $
-                  {selectedOrder.selectedTier?.price}/GB ({selectedOrder.selectedTier?.discount} discount)
-                </p>
-                <p>
-                  <strong>Payment Option:</strong> {selectedOrder.paymentOption}
-                </p>
+                {selectedOrder.isSpecialProxy ? (
+                  <>
+                    <p>
+                      <strong>Location:</strong> {selectedOrder.location || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Duration:</strong> {selectedOrder.duration || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Proxy Count:</strong> {selectedOrder.proxyCount || "N/A"}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p>
+                      <strong>GB Amount:</strong> {selectedOrder.gbAmount || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Additional GB:</strong> {selectedOrder.additionalGb || "N/A"}
+                    </p>
+                    <p>
+                      <strong>Selected Tier:</strong>
+                      {selectedOrder.selectedTier
+                        ? ` ${selectedOrder.selectedTier.gb}GB - $${selectedOrder.selectedTier.price}/GB (${selectedOrder.selectedTier.discount} discount)`
+                        : " N/A"}
+                    </p>
+                    <p>
+                      <strong>Payment Option:</strong> {selectedOrder.paymentOption || "N/A"}
+                    </p>
+                  </>
+                )}
               </>
             )}
+
+            <hr className="my-3" />
             <p>
               <strong>Referred By:</strong> {selectedOrder.referredBy || "N/A"}
             </p>
