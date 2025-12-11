@@ -1,8 +1,9 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { collection, getDocs, doc, deleteDoc } from "firebase/firestore"
+import { collection, getDocs, doc, deleteDoc, DocumentSnapshot } from "firebase/firestore"
 import { db } from "@/lib/firebaseConfig"
+import { getOrdersPage } from "@/lib/firestore"  // Import the new utility
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -58,6 +59,7 @@ interface Order {
   paymentOption?: string
   referredBy?: string | null
   dodoProductId?: string
+  finalTotal?: number  // Added for Visa orders if present
 }
 
 interface DeleteConfirmation {
@@ -66,7 +68,7 @@ interface DeleteConfirmation {
 }
 
 export default function AdminOrdersPage() {
-  const [orders, setOrders] = useState<Order[]>([])
+  const [allOrders, setAllOrders] = useState<Order[]>([])
   const [filteredOrders, setFilteredOrders] = useState<Order[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
@@ -80,6 +82,9 @@ export default function AdminOrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null)
   const [showModal, setShowModal] = useState(false)
   const [deleteConfirmation, setDeleteConfirmation] = useState<DeleteConfirmation | null>(null)
+  const [lastDoc, setLastDoc] = useState<DocumentSnapshot | null>(null)
+  const [hasMore, setHasMore] = useState(true)
+  const [isFetchingMore, setIsFetchingMore] = useState(false)
   const router = useRouter()
 
   const CustomToast = ({ closeToast, orderId }: { closeToast: ToastContentProps["closeToast"]; orderId: string }) => (
@@ -95,7 +100,6 @@ export default function AdminOrdersPage() {
           checked={deleteConfirmation?.confirmed || false}
           onCheckedChange={(checked) => {
             setDeleteConfirmation((prev) => (prev ? { ...prev, confirmed: checked as boolean } : null))
-            setFilteredOrders([...filteredOrders])
           }}
         />
         <label htmlFor="confirmDelete" className="ml-2 text-sm">
@@ -129,68 +133,77 @@ export default function AdminOrdersPage() {
     </div>
   )
 
+  // Load initial page and unique filters
   useEffect(() => {
-    const fetchOrders = async () => {
+    const fetchInitialData = async () => {
       setIsLoading(true)
-      try {
-        const ordersCollection = collection(db, "orders")
-        const snapshot = await getDocs(ordersCollection)
-        const fetchedOrders = snapshot.docs.map((doc) => {
-          const data = doc.data()
-          return {
-            id: doc.id,
-            ...data,
-            // For Visa orders, extract proxyType from orderDetails
-            proxyType: data.orderDetails?.proxyType || data.proxyType,
-            // For Visa orders, use paymentStatus; for others, use status
-            status: data.paymentStatus || data.status || "unknown",
-          } as Order
-        })
-        setOrders(fetchedOrders)
-        setFilteredOrders(fetchedOrders)
+      setAllOrders([])
+      setLastDoc(null)
+      setHasMore(true)
 
-        const paymentMethods = Array.from(new Set(fetchedOrders.map((order) => order.paymentMethod).filter(Boolean)))
-        const productTypes = Array.from(new Set(fetchedOrders.map((order) => order.proxyType).filter(Boolean)))
+      try {
+        const { orders } = await getOrdersPage({
+          filters: {
+            status: statusFilter,
+            paymentMethod: paymentMethodFilter,
+            productType: productTypeFilter,
+            dateFrom: dateFromFilter,
+            dateTo: dateToFilter,
+          },
+        })
+        setAllOrders(orders)
+
+        // Extract unique payment methods and product types from full collection (one-time)
+        const fullSnapshot = await getDocs(collection(db, "orders"))
+        const allData = fullSnapshot.docs.map(doc => doc.data())
+        const paymentMethods = Array.from(new Set(allData.map(o => o.paymentMethod).filter(Boolean)))
+        const productTypes = Array.from(new Set(allData.map(o => o.orderDetails?.proxyType || o.proxyType).filter(Boolean)))
         setUniquePaymentMethods(paymentMethods as string[])
         setUniqueProductTypes(productTypes as string[])
       } catch (error) {
         console.error("Failed to fetch orders:", error)
-        toast.error("Failed to load orders.", {
-          position: "top-right",
-          autoClose: 3000,
-          hideProgressBar: false,
-          closeOnClick: true,
-          pauseOnHover: true,
-          draggable: true,
-          progress: undefined,
-        })
+        toast.error("Failed to load orders.")
       } finally {
         setIsLoading(false)
       }
     }
 
-    fetchOrders()
-  }, [])
+    fetchInitialData()
+  }, [statusFilter, paymentMethodFilter, productTypeFilter, dateFromFilter, dateToFilter])
 
+  // Client-side search on loaded orders
   useEffect(() => {
-    const filtered = orders.filter((order) => {
-      const matchesSearch = order.id.toLowerCase().includes(searchTerm.toLowerCase())
-      const matchesStatus = statusFilter === "all" || order.status === statusFilter
-
-      const orderDate = new Date(order.createdAt)
-      const matchesDateFrom = !dateFromFilter || orderDate >= new Date(dateFromFilter)
-      const matchesDateTo = !dateToFilter || orderDate <= new Date(dateToFilter + "T23:59:59")
-
-      const matchesPaymentMethod = paymentMethodFilter === "all" || order.paymentMethod === paymentMethodFilter
-
-      const matchesProductType = productTypeFilter === "all" || order.proxyType === productTypeFilter
-
-      return (
-        matchesSearch && matchesStatus && matchesDateFrom && matchesDateTo && matchesPaymentMethod && matchesProductType
-      )
-    })
+    const filtered = allOrders.filter(order => 
+      order.id.toLowerCase().includes(searchTerm.toLowerCase())
+    )
     setFilteredOrders(filtered)
-  }, [orders, searchTerm, statusFilter, dateFromFilter, dateToFilter, paymentMethodFilter, productTypeFilter])
+  }, [allOrders, searchTerm])
+
+  const loadMore = async () => {
+    if (isFetchingMore || !hasMore) return
+    setIsFetchingMore(true)
+
+    try {
+      const { orders, lastVisible } = await getOrdersPage({
+        lastDoc,
+        filters: {
+          status: statusFilter,
+          paymentMethod: paymentMethodFilter,
+          productType: productTypeFilter,
+          dateFrom: dateFromFilter,
+          dateTo: dateToFilter,
+        },
+      })
+      setAllOrders(prev => [...prev, ...orders])
+      setLastDoc(lastVisible)
+      setHasMore(orders.length > 0)
+    } catch (error) {
+      console.error("Failed to load more orders:", error)
+      toast.error("Failed to load more orders.")
+    } finally {
+      setIsFetchingMore(false)
+    }
+  }
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -226,36 +239,24 @@ export default function AdminOrdersPage() {
       const orderDoc = doc(db, "orders", orderId)
       await deleteDoc(orderDoc)
 
-      setOrders(orders.filter((order) => order.id !== orderId))
-      setFilteredOrders(filteredOrders.filter((order) => order.id !== orderId))
+      setAllOrders(prev => prev.filter(order => order.id !== orderId))
+      setFilteredOrders(prev => prev.filter(order => order.id !== orderId))
 
-      toast.success("Order deleted successfully.", {
-        position: "top-right",
-        autoClose: 3000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-        progress: undefined,
-      })
+      toast.success("Order deleted successfully.")
     } catch (error) {
       console.error("Failed to delete order:", error)
-      toast.error("Failed to delete order.", {
-        position: "top-right",
-        autoClose: 3000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-        progress: undefined,
-      })
+      toast.error("Failed to delete order.")
     } finally {
       setDeleteConfirmation(null)
     }
   }
 
   const handleViewDetails = (order: Order) => {
-    setSelectedOrder(order)
+    setSelectedOrder({
+      ...order,
+      proxyType: order.orderDetails?.proxyType || order.proxyType,
+      status: order.paymentStatus || order.status || "unknown",
+    })
     setShowModal(true)
   }
 
@@ -387,14 +388,22 @@ export default function AdminOrdersPage() {
             {filteredOrders.map((order) => (
               <tr key={order.id} className="hover:bg-gray-50">
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">{order.id}</td>
-                <td className="px-6 py-4 whitespace-nowrap text-sm">{order.proxyType}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
-                  ${(order.totalAmount || order.totalPrice || 0).toFixed(2)}
+                  {order.orderDetails?.proxyType || order.proxyType || "N/A"}
+                </td>
+                <td className="px-6 py-4 whitespace-nowrap text-sm">
+                  {order.totalAmount != null || order.finalTotal != null || order.totalPrice != null
+                    ? `$${Number(order.totalAmount ?? order.finalTotal ?? order.totalPrice ?? 0).toFixed(2)}`
+                    : "N/A"}
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm">
                   {new Date(order.createdAt).toLocaleDateString()}
                 </td>
-                <td className="px-6 py-4 whitespace-nowrap">{getStatusBadge(order.status)}</td>
+                <td className="px-6 py-4 whitespace-nowrap">
+                  {order.paymentStatus || order.status
+                    ? getStatusBadge(order.paymentStatus || order.status)
+                    : <span className="text-gray-400">-</span>}
+                </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <Button
                     variant="ghost"
@@ -419,6 +428,14 @@ export default function AdminOrdersPage() {
         </table>
       </div>
 
+      {hasMore && (
+        <div className="mt-4 text-center">
+          <Button onClick={loadMore} disabled={isFetchingMore}>
+            {isFetchingMore ? "Loading..." : "Load More"}
+          </Button>
+        </div>
+      )}
+
       {showModal && selectedOrder && (
         <Modal isOpen={showModal} onClose={closeModal} title="Order Details">
           <div className="space-y-2 max-h-96 overflow-y-auto">
@@ -429,7 +446,7 @@ export default function AdminOrdersPage() {
               <strong>Product Type:</strong> {selectedOrder.proxyType}
             </p>
             <p>
-              <strong>Total Price:</strong> ${(selectedOrder.totalAmount || selectedOrder.totalPrice || 0).toFixed(2)}
+              <strong>Total Price:</strong> ${Number(selectedOrder.totalAmount ?? selectedOrder.finalTotal ?? selectedOrder.totalPrice ?? 0).toFixed(2)}
             </p>
             <p>
               <strong>Date:</strong> {new Date(selectedOrder.createdAt).toLocaleDateString()}
