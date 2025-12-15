@@ -27,7 +27,7 @@
     "facelessprpoxy-admin": "file:",
     "firebase": "^11.0.2",
     "lucide-react": "^0.465.0",
-    "next": "15.0.3",
+    "next": "15.0.7",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-toastify": "^11.0.2",
