@@ -2,8 +2,14 @@
 
 import { NextResponse } from 'next/server';
 import { addSubUserBalance } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
 export async function POST(request: Request) {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   try {
     const { subUserId, traffic } = await request.json();
     await addSubUserBalance(subUserId, traffic);

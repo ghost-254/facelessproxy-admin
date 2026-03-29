@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getSubUserList, getSubUserUsageStats } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
 export async function GET(request: Request) {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   const { searchParams } = new URL(request.url);
   const period = searchParams.get('period') || 'month';
 

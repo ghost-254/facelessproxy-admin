@@ -4,6 +4,7 @@
 
 import { NextResponse } from 'next/server';
 import { getSubUserList } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
 interface SubUser {
   id: string;
@@ -17,6 +18,11 @@ interface SubUser {
 }
 
 export async function GET() {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   try {
     let subUsers: SubUser[] = []; // Explicitly type the variable
     let offset = 0;

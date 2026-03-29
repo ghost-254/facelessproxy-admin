@@ -1,6 +1,8 @@
-// app/page.tsx (Updated as admin landing, redirects to dashboard)
-import { redirect } from "next/navigation"
+import { redirect } from "next/navigation";
 
-export default function Home() {
-  redirect("/admin")
+import { getCurrentAdmin } from "@/lib/auth/server";
+
+export default async function Home() {
+  const admin = await getCurrentAdmin();
+  redirect(admin ? "/admin" : "/login");
 }

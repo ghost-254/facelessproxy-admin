@@ -6,7 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "eslint ."
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
@@ -26,19 +26,23 @@
     "dotenv": "^16.4.7",
     "facelessprpoxy-admin": "file:",
     "firebase": "^11.0.2",
+    "firebase-admin": "^13.6.0",
     "lucide-react": "^0.465.0",
-    "next": "15.0.7",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "next": "^16.2.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "react-is": "^19.2.4",
     "react-toastify": "^11.0.2",
-    "recharts": "^2.14.1",
+    "recharts": "^3.8.1",
     "tailwind-merge": "^2.5.5",
     "tailwindcss-animate": "^1.0.7"
   },
   "devDependencies": {
     "@types/node": "^20",
-    "@types/react": "^18",
-    "@types/react-dom": "^18",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "eslint": "^9.39.4",
+    "eslint-config-next": "^16.2.1",
     "postcss": "^8",
     "tailwind-scrollbar": "^3.1.0",
     "tailwindcss": "^3.4.1",

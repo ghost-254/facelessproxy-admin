@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import { setDefaultPoolParameters } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
 export async function POST(request: Request) {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   try {
-    const { subuser_id, country, state, city, zipCode, asn, anonymousFilter, rotationInterval } = await request.json();
+    const { subuser_id, country, city, zipCode, asn, anonymousFilter, rotationInterval } = await request.json();
 
     const countryCode = country;
 

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getSubUserList, getSubUserUsageStats } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
-export async function GET(request: Request) {
+export async function GET() {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   try {
     // Fetch sub-users
     const subUsers = await getSubUserList();

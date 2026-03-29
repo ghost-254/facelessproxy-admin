@@ -1,150 +1,195 @@
-// app/admin/page.tsx (Updated with header and fulfilled orders filter)
-import AdminHeader from "@/components/admin/Header"
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { Badge } from "@/components/ui/badge"
-import { collection, getDocs, query, orderBy, limit, where } from "firebase/firestore"
-import { db } from "@/lib/firebaseConfig"
-import { DollarSign, ShoppingCart, CheckCircle2, TrendingUp, Eye, ArrowRight } from "lucide-react"
+import { ArrowRight } from "lucide-react";
+import Link from "next/link";
 
-async function getRecentOrders() {
-  const q = query(
-    collection(db, "orders"),
-    where("status", "==", "fulfilled"),
-    orderBy("createdAt", "desc"),
-    limit(10)
-  )
-  const snapshot = await getDocs(q)
-  return snapshot.docs.map(doc => ({
-    id: doc.id,
-    ...doc.data(),
-    proxyType: doc.data().orderDetails?.proxyType || doc.data().proxyType || "N/A",
-    total: doc.data().totalAmount || doc.data().finalTotal || doc.data().totalPrice || 0,
-    status: doc.data().paymentStatus || doc.data().status || "unknown",
-  }))
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { getDashboardOverview } from "@/lib/admin/data";
+import { requireAdmin } from "@/lib/auth/server";
+
+export const dynamic = "force-dynamic";
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(value);
 }
 
-async function getStats() {
-  const q = query(collection(db, "orders"), where("status", "==", "fulfilled"))
-  const snapshot = await getDocs(q)
-  const orders = snapshot.docs.map(doc => doc.data())
+function formatDate(value: string | null) {
+  if (!value) {
+    return "Unknown";
+  }
 
-  const totalRevenue = orders.reduce((sum, o) => sum + (o.totalAmount || o.finalTotal || o.totalPrice || 0), 0)
-  const totalOrders = orders.length
-  const paidOrders = orders.filter(o => o.paymentStatus === "paid" || o.status === "paid").length
-
-  return { totalRevenue, totalOrders, paidOrders }
+  return new Date(value).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
-export default async function AdminDashboard() {
-  const [recentOrders, stats] = await Promise.all([getRecentOrders(), getStats()])
+function statusVariant(status: string) {
+  if (status === "fulfilled" || status === "paid") {
+    return "success" as const;
+  }
+
+  if (status === "pending") {
+    return "warning" as const;
+  }
+
+  if (status === "unpaid") {
+    return "destructive" as const;
+  }
+
+  return "default" as const;
+}
+
+export default async function AdminDashboardPage() {
+  const admin = await requireAdmin("/admin");
+  const dashboard = await getDashboardOverview(admin);
+  const maxRevenue = Math.max(...dashboard.revenueSeries.map((entry) => entry.revenue), 1);
+  const totalPipeline = Math.max(dashboard.pipeline.reduce((sum, item) => sum + item.value, 0), 1);
 
   return (
-    <>
-      <AdminHeader />
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-8">
-          <h1 className="text-3xl font-bold">Admin Dashboard</h1>
-          <Button asChild>
-            <Link href="/admin/orders">
-              View All Orders <ArrowRight className="ml-2 h-4 w-4" />
-            </Link>
-          </Button>
-        </div>
-
-        {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Total Revenue</CardTitle>
-              <DollarSign className="h-5 w-5 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">${stats.totalRevenue.toFixed(2)}</div>
-              <p className="text-xs text-slate-500">From fulfilled orders</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Fulfilled Orders</CardTitle>
-              <ShoppingCart className="h-5 w-5 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.totalOrders}</div>
-              <p className="text-xs text-slate-500">Completed sales</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Paid Fulfilled</CardTitle>
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">{stats.paidOrders}</div>
-              <p className="text-xs text-slate-500">Successful payments</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between pb-2">
-              <CardTitle className="text-sm font-medium">Conversion Rate</CardTitle>
-              <TrendingUp className="h-5 w-5 text-purple-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold">
-                {stats.totalOrders > 0 ? ((stats.paidOrders / stats.totalOrders) * 100).toFixed(1) : 0}%
-              </div>
-              <p className="text-xs text-slate-500">Paid / Fulfilled</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Recent Orders */}
-        <Card>
+    <div className="space-y-6">
+      <section className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        <Card className="rounded-[28px] border-white/80 bg-[linear-gradient(135deg,rgba(15,23,42,0.96),rgba(15,118,110,0.88))] text-white shadow-xl shadow-slate-900/10">
           <CardHeader>
-            <CardTitle>Recent Fulfilled Orders</CardTitle>
-            <CardDescription>Last 10 fulfilled orders</CardDescription>
+            <CardDescription className="text-white/70">Ops snapshot</CardDescription>
+            <CardTitle className="font-display text-4xl leading-tight">
+              Welcome back, {dashboard.admin.name || dashboard.admin.email || "operator"}.
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <p className="max-w-2xl text-sm leading-7 text-white/80">
+              Review activity, monitor order flow, and handle daily admin work from a single dashboard.
+            </p>
+            <div className="flex flex-wrap gap-3">
+              <Button asChild className="rounded-2xl bg-white text-slate-950 hover:bg-white/90">
+                <Link href="/admin/orders">
+                  Open order queue
+                  <ArrowRight className="h-4 w-4" />
+                </Link>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                className="rounded-2xl border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+              >
+                <Link href="/admin/analytics">Review analytics</Link>
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[28px] border-white/80 bg-white/80">
+          <CardHeader>
+            <CardDescription>Seven-day revenue pulse</CardDescription>
+            <CardTitle className="font-display text-2xl">Momentum at a glance</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {dashboard.revenueSeries.map((entry) => (
+              <div key={entry.label} className="grid grid-cols-[72px_1fr_auto] items-center gap-3">
+                <p className="text-sm text-slate-500">{entry.label}</p>
+                <div className="h-3 rounded-full bg-slate-100">
+                  <div
+                    className="h-3 rounded-full bg-gradient-to-r from-teal-700 to-sky-500"
+                    style={{ width: `${Math.max((entry.revenue / maxRevenue) * 100, entry.revenue > 0 ? 8 : 0)}%` }}
+                  />
+                </div>
+                <p className="text-sm font-medium text-slate-900">{formatCurrency(entry.revenue)}</p>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      </section>
+
+      <section className="grid gap-4 lg:grid-cols-4">
+        {dashboard.metrics.map((metric) => (
+          <Card key={metric.label} className="rounded-[28px] border-white/80 bg-white/80">
+            <CardHeader>
+              <CardDescription>{metric.label}</CardDescription>
+              <CardTitle className="font-display text-3xl">{metric.value}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Badge variant={metric.tone === "success" ? "success" : metric.tone === "warning" ? "warning" : "secondary"}>
+                {metric.delta}
+              </Badge>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      <section className="grid gap-4 xl:grid-cols-[0.8fr_1.2fr]">
+        <Card className="rounded-[28px] border-white/80 bg-white/80">
+          <CardHeader>
+            <CardDescription>Pipeline</CardDescription>
+            <CardTitle className="font-display text-2xl">Where the queue stands</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {dashboard.pipeline.map((entry) => (
+              <div key={entry.label} className="space-y-2">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-slate-600">{entry.label}</span>
+                  <span className="font-medium text-slate-900">{entry.value}</span>
+                </div>
+                <div className="h-3 rounded-full bg-slate-100">
+                  <div
+                    className="h-3 rounded-full bg-slate-950"
+                    style={{ width: `${Math.max((entry.value / totalPipeline) * 100, entry.value > 0 ? 8 : 0)}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+
+        <Card className="rounded-[28px] border-white/80 bg-white/80">
+          <CardHeader className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+            <div>
+              <CardDescription>Recent orders</CardDescription>
+              <CardTitle className="font-display text-2xl">Latest commercial movement</CardTitle>
+            </div>
+            <Button asChild variant="outline" className="rounded-2xl border-white/70 bg-white/80">
+              <Link href="/admin/orders">See full queue</Link>
+            </Button>
           </CardHeader>
           <CardContent>
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Order ID</TableHead>
+                  <TableHead>Order</TableHead>
                   <TableHead>Product</TableHead>
                   <TableHead>Amount</TableHead>
                   <TableHead>Status</TableHead>
-                  <TableHead>Action</TableHead>
+                  <TableHead>Date</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {recentOrders.map((order) => (
+                {dashboard.recentOrders.map((order) => (
                   <TableRow key={order.id}>
-                    <TableCell className="font-mono text-sm">{order.id.slice(0, 12)}...</TableCell>
-                    <TableCell>{order.proxyType}</TableCell>
-                    <TableCell>${Number(order.total).toFixed(2)}</TableCell>
                     <TableCell>
-                      <Badge variant={order.status === "paid" ? "success" : order.status === "pending" ? "warning" : "destructive"}>
+                      <div className="space-y-1">
+                        <p className="font-medium text-slate-900">{order.id}</p>
+                        <p className="text-xs text-slate-500">{order.customerEmail || "Unknown client"}</p>
+                      </div>
+                    </TableCell>
+                    <TableCell>{order.proxyType}</TableCell>
+                    <TableCell>{formatCurrency(order.amount)}</TableCell>
+                    <TableCell>
+                      <Badge variant={statusVariant(order.status)} className="capitalize">
                         {order.status}
                       </Badge>
                     </TableCell>
-                    <TableCell>
-                      <Button size="sm" variant="ghost" asChild>
-                        <Link href={`/admin/orders/fulfill-order?id=${order.id}`}>
-                          <Eye className="h-4 w-4" />
-                        </Link>
-                      </Button>
-                    </TableCell>
+                    <TableCell>{formatDate(order.createdAt)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </CardContent>
         </Card>
-      </div>
-    </>
-  )
+      </section>
+    </div>
+  );
 }

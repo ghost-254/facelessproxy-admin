@@ -1,75 +1,72 @@
-'use client'
+import { redirect } from "next/navigation";
+import { ShieldCheck, Sparkles, Waypoints } from "lucide-react";
 
-import { useState } from 'react'
-import { useRouter } from 'next/navigation'
-import { signInWithEmailAndPassword } from 'firebase/auth'
-import { auth } from '@/lib/firebaseConfig'
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import AdminLoginForm from "@/components/auth/AdminLoginForm";
+import { getCurrentAdmin } from "@/lib/auth/server";
 
-export default function Login() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const router = useRouter()
+export const dynamic = "force-dynamic";
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setLoading(true)
-    setError('')
+type LoginPageProps = {
+  searchParams: Promise<{
+    next?: string;
+    reason?: string;
+  }>;
+};
 
-    try {
-      await signInWithEmailAndPassword(auth, email, password)
-      router.push('/')
-    } catch (error) {
-      console.error('Error during login:', error)
-      setError('Invalid email or password. Please try again.')
-    } finally {
-      setLoading(false)
-    }
+export default async function LoginPage({ searchParams }: LoginPageProps) {
+  const admin = await getCurrentAdmin();
+  const params = await searchParams;
+  const nextPath = typeof params.next === "string" ? params.next : "/admin";
+
+  if (admin) {
+    redirect(nextPath);
   }
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-100 to-purple-100">
-      <Card className="w-full max-w-md">
-        <CardHeader>
-          <CardTitle className="text-2xl font-bold text-center">Admin Login</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleLogin} className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Enter your password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-              />
-            </div>
-            {error && <p className="text-red-500 text-sm">{error}</p>}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Logging in...' : 'Log In'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
-  )
-}
+    <main className="relative min-h-screen overflow-hidden bg-[linear-gradient(180deg,#f8f4ec_0%,#eef5f3_45%,#f4f7fb_100%)] px-4 py-8">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(18,133,118,0.18),transparent_32%),radial-gradient(circle_at_bottom_right,rgba(245,158,11,0.16),transparent_28%)]" />
+      <div className="hero-grid absolute inset-0 opacity-60" />
 
+      <div className="relative mx-auto grid min-h-[calc(100vh-4rem)] max-w-6xl gap-10 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+        <section className="space-y-8">
+          <div className="inline-flex items-center gap-2 rounded-full border border-white/70 bg-white/70 px-4 py-2 text-sm font-medium text-slate-700 shadow-sm backdrop-blur">
+            <ShieldCheck className="h-4 w-4 text-teal-700" />
+            Faceless Proxy operations access
+          </div>
+
+          <div className="max-w-2xl space-y-6">
+            <p className="font-display text-5xl font-semibold tracking-tight text-slate-950 md:text-6xl">
+              Run the admin side with a cleaner cockpit and stricter access control.
+            </p>
+            <p className="max-w-xl text-lg leading-8 text-slate-600">
+              Sign in to manage orders, clients, fulfillment, and reporting from one secure admin panel.
+            </p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <div className="glass-panel rounded-3xl p-5">
+              <Sparkles className="mb-3 h-5 w-5 text-amber-500" />
+              <p className="font-display text-lg font-semibold text-slate-900">Clearer layout</p>
+              <p className="mt-2 text-sm text-slate-600">A cleaner structure for day-to-day admin work.</p>
+            </div>
+            <div className="glass-panel rounded-3xl p-5">
+              <ShieldCheck className="mb-3 h-5 w-5 text-teal-700" />
+              <p className="font-display text-lg font-semibold text-slate-900">Secure access</p>
+              <p className="mt-2 text-sm text-slate-600">Admin routes are protected by server-validated sessions.</p>
+            </div>
+            <div className="glass-panel rounded-3xl p-5">
+              <Waypoints className="mb-3 h-5 w-5 text-sky-600" />
+              <p className="font-display text-lg font-semibold text-slate-900">Connected workflow</p>
+              <p className="mt-2 text-sm text-slate-600">Orders, clients, and analytics now live in one consistent workspace.</p>
+            </div>
+          </div>
+        </section>
+
+        <AdminLoginForm
+          nextPath={nextPath}
+          reason={typeof params.reason === "string" ? params.reason : undefined}
+        />
+      </div>
+    </main>
+  );
+}

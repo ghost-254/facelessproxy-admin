@@ -1,27 +1,36 @@
-import './globals.css'
-import { Inter } from 'next/font/google'
-import AuthWrapper from '@/components/AuthWrapper'
+import type { Metadata } from "next";
+import { Manrope, Space_Grotesk } from "next/font/google";
 
-const inter = Inter({ subsets: ['latin'] })
+import "./globals.css";
+import { Toaster } from "@/components/ui/toaster";
 
-export const metadata = {
-  title: 'Proxy Reseller Admin Dashboard',
-  description: 'Manage your proxy reselling business',
-}
+const manrope = Manrope({
+  subsets: ["latin"],
+  variable: "--font-manrope",
+});
+
+const spaceGrotesk = Space_Grotesk({
+  subsets: ["latin"],
+  variable: "--font-space-grotesk",
+});
+
+export const metadata: Metadata = {
+  title: "Faceless Proxy Admin",
+  description: "Operations console for orders, clients, analytics, and fulfillment.",
+};
 
 export default function RootLayout({
   children,
-}: {
-  children: React.ReactNode
-}) {
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="en">
-      <body className={inter.className}>
-        <AuthWrapper>
-          {children}
-        </AuthWrapper>
+    <html lang="en" className={`${manrope.variable} ${spaceGrotesk.variable}`}>
+      <body className="antialiased">
+        {children}
+        <Toaster />
       </body>
     </html>
-  )
+  );
 }
 

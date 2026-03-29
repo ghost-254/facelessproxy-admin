@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getSubUserList } from '@/lib/dataImpulseApi';
+import { ensureAdminApiAccess } from '@/lib/auth/server';
 
 export async function GET() {
+  const authResult = await ensureAdminApiAccess();
+  if (!authResult.ok) {
+    return authResult.response;
+  }
+
   try {
     let total = 0; // Initialize the total counter
     let offset = 0; // Start offset for pagination
