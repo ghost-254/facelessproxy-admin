@@ -3,8 +3,10 @@ import "server-only";
 import { revalidateTag, unstable_cache } from "next/cache";
 import { FieldValue, Timestamp } from "firebase-admin/firestore";
 
+import { renderOrderFulfillmentEmail } from "@/lib/admin/email-templates";
 import type { AdminSessionUser } from "@/lib/auth/server";
 import { getAdminDb } from "@/lib/firebase-admin";
+import { getClientDashboardUrl, getSupportEmailContact, sendEmail } from "@/lib/mailer";
 import type { AdminClient, AdminOrderDetail, AdminOrderSummary, AnalyticsOverview, DashboardOverview } from "@/lib/admin/types";
 
 type FirestoreRecord = Record<string, unknown>;
@@ -281,6 +283,40 @@ function getKnownEmail(data: FirestoreRecord) {
   return null;
 }
 
+function getKnownName(data: FirestoreRecord) {
+  const orderDetails = isPlainObject(data.orderDetails) ? data.orderDetails : null;
+  const customer = isPlainObject(data.customer) ? data.customer : null;
+  const user = isPlainObject(data.user) ? data.user : null;
+  const profile = isPlainObject(data.profile) ? data.profile : null;
+  const account = isPlainObject(data.account) ? data.account : null;
+
+  const candidates = [
+    data.name,
+    data.fullName,
+    data.customerName,
+    data.userName,
+    data.username,
+    orderDetails?.name,
+    orderDetails?.fullName,
+    orderDetails?.customerName,
+    user?.name,
+    user?.fullName,
+    customer?.name,
+    customer?.fullName,
+    profile?.name,
+    account?.name,
+  ];
+
+  for (const candidate of candidates) {
+    const name = sanitizeText(candidate);
+    if (name) {
+      return name;
+    }
+  }
+
+  return null;
+}
+
 function collectUserIdCandidates(data: FirestoreRecord) {
   const orderDetails = isPlainObject(data.orderDetails) ? data.orderDetails : null;
   const candidates = new Set<string>();
@@ -358,6 +394,28 @@ async function buildClientEmailLookupFromUserIds(userIds: string[]) {
   return lookup;
 }
 
+async function resolveCustomerEmailForOrder(rawData: FirestoreRecord) {
+  const knownEmail = getKnownEmail(rawData);
+  if (knownEmail) {
+    return knownEmail;
+  }
+
+  const userIds = collectUserIdCandidates(rawData);
+  if (userIds.length === 0) {
+    return null;
+  }
+
+  const clientEmailLookup = await buildClientEmailLookupFromUserIds(userIds);
+  for (const userId of userIds) {
+    const email = lookupClientEmail(clientEmailLookup, userId);
+    if (email) {
+      return email;
+    }
+  }
+
+  return null;
+}
+
 async function buildClientEmailLookupFromOrders(orderRecords: FirestoreRecord[]) {
   const userIds = new Set<string>();
 
@@ -380,6 +438,50 @@ function lookupClientEmail(clientEmailLookup: Map<string, string>, userId: strin
   }
 
   return clientEmailLookup.get(normalizedUserId) || clientEmailLookup.get(normalizedUserId.toLowerCase()) || null;
+}
+
+function toOrderFulfillmentProxyLine(hostname: string, port: string, login: string, password: string) {
+  return `${sanitizeText(hostname)}:${sanitizeText(port)}:${sanitizeText(login)}:${sanitizeText(password)}`;
+}
+
+function normalizeProxyLine(value: string) {
+  const trimmed = sanitizeText(value);
+  if (!trimmed) {
+    return "";
+  }
+
+  const baseCandidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+
+  try {
+    const parsed = new URL(baseCandidate);
+    const hostname = sanitizeText(parsed.hostname);
+    const port = sanitizeText(parsed.port);
+    const login = decodeURIComponent(parsed.username || "");
+    const password = decodeURIComponent(parsed.password || "");
+    if (hostname && port && login) {
+      return toOrderFulfillmentProxyLine(hostname, port, login, password);
+    }
+  } catch {
+    // no-op, fallback below
+  }
+
+  const colonParts = trimmed.split(":");
+  if (colonParts.length >= 4) {
+    const hostname = sanitizeText(colonParts[0]);
+    const port = sanitizeText(colonParts[1]);
+    const login = sanitizeText(colonParts[2]);
+    const password = sanitizeText(colonParts.slice(3).join(":"));
+    if (hostname && port && login) {
+      return toOrderFulfillmentProxyLine(hostname, port, login, password);
+    }
+  }
+
+  return trimmed;
+}
+
+function locationSortWeight(key: string) {
+  const match = key.match(/\d+/);
+  return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
 }
 
 function getAmount(data: FirestoreRecord) {
@@ -608,46 +710,91 @@ type SpecialFulfillmentPayload = {
 
 export async function fulfillOrder(orderId: string, payload: StandardFulfillmentPayload | SpecialFulfillmentPayload) {
   const orderRef = collection("orders").doc(orderId);
+  const existingSnapshot = await orderRef.get();
+
+  if (!existingSnapshot.exists) {
+    throw new Error("Order not found.");
+  }
+
+  const existingData = existingSnapshot.data() as FirestoreRecord;
+  const wasFulfilledAlready = getStatus(existingData) === "fulfilled" || Boolean(toDateValue(existingData.fulfilledAt));
+  let fulfillmentProxyLines: string[] = [];
 
   if (payload.mode === "special") {
     const sanitizedProxyList = payload.proxyList
       .map((entry) => entry.trim())
       .filter(Boolean);
+    fulfillmentProxyLines = sanitizedProxyList.map((entry) => normalizeProxyLine(entry)).filter(Boolean);
 
     await orderRef.update({
       status: "fulfilled",
       proxyList: sanitizedProxyList,
       fulfilledAt: FieldValue.serverTimestamp(),
     });
+  } else {
+    const sanitizedProxyDetails = Object.fromEntries(
+      Object.entries(payload.proxyDetails || {}).map(([key, value]) => [
+        key,
+        {
+          ip: sanitizeText(value.ip),
+          port: sanitizeText(value.port),
+          username: sanitizeText(value.username),
+          password: sanitizeText(value.password),
+          protocol: value.protocol,
+        },
+      ]),
+    );
+    const orderedKeys = Object.keys(sanitizedProxyDetails).sort((left, right) => locationSortWeight(left) - locationSortWeight(right));
+    fulfillmentProxyLines = orderedKeys
+      .map((key) => {
+        const details = sanitizedProxyDetails[key];
+        if (!details.ip || !details.port || !details.username) {
+          return "";
+        }
 
-    clearRuntimeCache(RUNTIME_ORDERS_CACHE_KEY);
-    revalidateTag(ADMIN_ORDERS_TAG, "max");
-    return;
+        return toOrderFulfillmentProxyLine(details.ip, details.port, details.username, details.password);
+      })
+      .filter(Boolean);
+
+    await orderRef.update({
+      status: "fulfilled",
+      proxyDetails: sanitizedProxyDetails,
+      locations: payload.locations,
+      gbAmount: typeof payload.gbAmount === "number" ? payload.gbAmount : null,
+      fulfilledAt: FieldValue.serverTimestamp(),
+    });
   }
-
-  const sanitizedProxyDetails = Object.fromEntries(
-    Object.entries(payload.proxyDetails || {}).map(([key, value]) => [
-      key,
-      {
-        ip: sanitizeText(value.ip),
-        port: sanitizeText(value.port),
-        username: sanitizeText(value.username),
-        password: sanitizeText(value.password),
-        protocol: value.protocol,
-      },
-    ]),
-  );
-
-  await orderRef.update({
-    status: "fulfilled",
-    proxyDetails: sanitizedProxyDetails,
-    locations: payload.locations,
-    gbAmount: typeof payload.gbAmount === "number" ? payload.gbAmount : null,
-    fulfilledAt: FieldValue.serverTimestamp(),
-  });
 
   clearRuntimeCache(RUNTIME_ORDERS_CACHE_KEY);
   revalidateTag(ADMIN_ORDERS_TAG, "max");
+
+  if (!wasFulfilledAlready) {
+    try {
+      const recipientEmail = await resolveCustomerEmailForOrder(existingData);
+      if (!recipientEmail) {
+        console.error(`Fulfillment email skipped for ${orderId}: customer email is missing.`);
+        return;
+      }
+
+      const renderedEmail = renderOrderFulfillmentEmail({
+        recipientName: getKnownName(existingData),
+        recipientEmail,
+        orderId,
+        proxyLines: fulfillmentProxyLines,
+        supportEmail: getSupportEmailContact(),
+        dashboardUrl: getClientDashboardUrl(),
+      });
+
+      await sendEmail({
+        to: recipientEmail,
+        subject: renderedEmail.subject,
+        text: renderedEmail.text,
+        html: renderedEmail.html,
+      });
+    } catch (error) {
+      console.error(`Fulfillment email send failed for ${orderId}:`, error);
+    }
+  }
 }
 
 async function fetchClientsFromFirestore() {

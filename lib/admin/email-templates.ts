@@ -160,9 +160,18 @@ type RenderedTemplate = {
   html: string;
 };
 
+type RenderedFulfillmentEmail = {
+  subject: string;
+  text: string;
+  html: string;
+};
+
 function sanitize(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
 }
+
+const INBOX_PLACEMENT_NOTE =
+  "To keep future updates in your inbox, please add FacelessProxy to your contacts and mark this email as safe if it lands in Spam or Promotions.";
 
 function escapeHtml(value: string) {
   return value
@@ -242,15 +251,18 @@ function wrapHtml({
   headline,
   body,
   ctaLabel,
+  detailsBlockHtml,
 }: {
   preview: string;
   headline: string;
   body: string[];
   ctaLabel: string;
+  detailsBlockHtml?: string;
 }) {
   const safePreview = escapeHtml(preview);
   const safeHeadline = escapeHtml(headline);
   const safeBody = body.map((entry) => `<p style="margin:0 0 14px;color:#0f172a;line-height:1.65;font-size:15px;">${escapeHtml(entry)}</p>`).join("");
+  const renderedDetailsBlock = detailsBlockHtml ? `<div style="margin:18px 0 8px;">${detailsBlockHtml}</div>` : "";
 
   return `
 <!doctype html>
@@ -271,6 +283,7 @@ function wrapHtml({
       <tr>
         <td style="padding:28px 26px 26px;">
           ${safeBody}
+          ${renderedDetailsBlock}
           <p style="margin:20px 0 0;">
             <span style="display:inline-block;background:#0f172a;color:#ffffff;padding:11px 16px;border-radius:999px;font-size:13px;font-weight:600;">
               ${escapeHtml(ctaLabel)}
@@ -283,11 +296,18 @@ function wrapHtml({
           <p style="margin:0;color:#475569;font-size:12px;line-height:1.6;">
             You are receiving this message because you have an account or order history with FacelessProxy.
           </p>
+          <p style="margin:10px 0 0;color:#334155;font-size:12px;line-height:1.6;font-weight:600;">
+            ${escapeHtml(INBOX_PLACEMENT_NOTE)}
+          </p>
         </td>
       </tr>
     </table>
   </body>
 </html>`;
+}
+
+function withInboxPlacementFooter(text: string) {
+  return `${text}\n\n---\n${INBOX_PLACEMENT_NOTE}`;
 }
 
 export function getEmailCampaignTemplateById(templateId: string) {
@@ -326,7 +346,7 @@ export function renderEmailCampaignTemplate(
 
     return {
       subject,
-      text: lines.join("\n\n"),
+      text: withInboxPlacementFooter(lines.join("\n\n")),
       html: wrapHtml({
         preview: subject,
         headline: "Your New High-Performance Proxy Deal Is Ready",
@@ -352,7 +372,7 @@ export function renderEmailCampaignTemplate(
 
     return {
       subject,
-      text: lines.join("\n\n"),
+      text: withInboxPlacementFooter(lines.join("\n\n")),
       html: wrapHtml({
         preview: subject,
         headline: "Let's Get Your Proxy Traffic Moving",
@@ -373,12 +393,62 @@ export function renderEmailCampaignTemplate(
 
   return {
     subject,
-    text: lines.join("\n\n"),
+    text: withInboxPlacementFooter(lines.join("\n\n")),
     html: wrapHtml({
       preview: subject,
       headline: "A Private Deal Reserved For You",
       body: lines,
       ctaLabel: `Redeem ${values.couponCode}`,
+    }),
+  };
+}
+
+type FulfillmentEmailInput = {
+  recipientName?: string | null;
+  recipientEmail?: string | null;
+  orderId: string;
+  proxyLines: string[];
+  supportEmail?: string | null;
+  dashboardUrl?: string | null;
+};
+
+export function renderOrderFulfillmentEmail(input: FulfillmentEmailInput): RenderedFulfillmentEmail {
+  const recipientName = resolveName(input.recipientName, input.recipientEmail);
+  const supportEmail = sanitize(input.supportEmail) || "support@facelessproxy.com";
+  const dashboardUrl = sanitize(input.dashboardUrl);
+  const normalizedProxyLines = input.proxyLines.map((line) => sanitize(line)).filter(Boolean);
+  const proxyBlock = normalizedProxyLines.join("\n");
+
+  const subject = `Your FacelessProxy Order ${input.orderId} Is Fulfilled`;
+  const bodyLines = [
+    `Hi ${recipientName},`,
+    `Great news. Your order ${input.orderId} has been fulfilled successfully.`,
+    "Your proxy credentials are included below.",
+    "Credentials format: hostname:port:login:password",
+    dashboardUrl
+      ? `You can also view your proxies any time from your dashboard: ${dashboardUrl}`
+      : "You can also view your proxies any time by logging in to your dashboard.",
+    `If you need help with setup, reply to this email or contact ${supportEmail}.`,
+  ];
+
+  const textContent = withInboxPlacementFooter(
+    `${bodyLines.join("\n\n")}\n\nProxy details:\n${proxyBlock || "No proxy details were attached."}`,
+  );
+
+  const detailsBlockHtml = `
+    <p style="margin:0 0 8px;color:#0f172a;font-size:13px;font-weight:600;">Proxy details (hostname:port:login:password)</p>
+    <pre style="margin:0;padding:14px;border-radius:14px;background:#0f172a;color:#e2e8f0;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;">${escapeHtml(proxyBlock || "No proxy details were attached.")}</pre>
+  `;
+
+  return {
+    subject,
+    text: textContent,
+    html: wrapHtml({
+      preview: subject,
+      headline: "Your Order Is Ready",
+      body: bodyLines,
+      ctaLabel: "Proxy credentials delivered",
+      detailsBlockHtml,
     }),
   };
 }

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Plus, Trash2 } from "lucide-react";
+import { Eye, EyeOff, Plus, Trash2 } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -71,6 +71,7 @@ export default function FulfillOrderPage() {
   const [proxyDetails, setProxyDetails] = useState<Record<string, ProxyDetails>>({});
   const [newLocation, setNewLocation] = useState<Location>({ country: "", state: "", city: "", zipcode: "" });
   const [gbAmount, setGbAmount] = useState<number | "">("");
+  const [visiblePasswords, setVisiblePasswords] = useState<Record<string, boolean>>({});
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -178,6 +179,14 @@ export default function FulfillOrderPage() {
 
     setLocations(updatedLocations);
     setProxyDetails(updatedProxyDetails);
+  }
+
+  function togglePasswordVisibility(index: number) {
+    const key = `location${index + 1}`;
+    setVisiblePasswords((current) => ({
+      ...current,
+      [key]: !current[key],
+    }));
   }
 
   async function handleSave() {
@@ -346,12 +355,22 @@ export default function FulfillOrderPage() {
             </div>
             <div className="space-y-2">
               <Label>Password</Label>
-              <Input
-                type="password"
-                value={proxyDetails[`location${index + 1}`]?.password || ""}
-                onChange={(event) => updateProxyDetails(index, "password", event.target.value)}
-                className="rounded-2xl border-white/70 bg-white/80"
-              />
+              <div className="relative">
+                <Input
+                  type={visiblePasswords[`location${index + 1}`] ? "text" : "password"}
+                  value={proxyDetails[`location${index + 1}`]?.password || ""}
+                  onChange={(event) => updateProxyDetails(index, "password", event.target.value)}
+                  className="rounded-2xl border-white/70 bg-white/80 pr-11"
+                />
+                <button
+                  type="button"
+                  onClick={() => togglePasswordVisibility(index)}
+                  className="absolute inset-y-0 right-0 inline-flex items-center px-3 text-slate-500 transition hover:text-slate-800"
+                  aria-label={visiblePasswords[`location${index + 1}`] ? "Hide password" : "Show password"}
+                >
+                  {visiblePasswords[`location${index + 1}`] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               <Label>Zip code</Label>

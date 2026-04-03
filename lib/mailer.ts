@@ -109,6 +109,14 @@ export function getSupportWhatsappContact() {
   return sanitize(process.env.MAILER_SUPPORT_WHATSAPP || process.env.SUPPORT_WHATSAPP);
 }
 
+export function getClientDashboardUrl() {
+  return sanitize(
+    process.env.MAILER_CLIENT_DASHBOARD_URL ||
+      process.env.CLIENT_DASHBOARD_URL ||
+      process.env.NEXT_PUBLIC_CLIENT_DASHBOARD_URL,
+  );
+}
+
 export async function sendEmail(payload: SendEmailPayload) {
   const config = readMailerConfig();
   const transporter = getTransporter();
