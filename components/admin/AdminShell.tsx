@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
-import { BarChart3, LayoutDashboard, Menu, PackageCheck, Users2, X } from "lucide-react";
+import { BarChart3, LayoutDashboard, Mail, Menu, PackageCheck, Users2, X } from "lucide-react";
 
 import type { AdminSessionUser } from "@/lib/auth/server";
 import { cn } from "@/lib/utils";
@@ -18,6 +18,7 @@ const navigation = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/orders", label: "Orders", icon: PackageCheck },
   { href: "/admin/clients", label: "Clients", icon: Users2 },
+  { href: "/admin/emails", label: "Campaigns", icon: Mail },
   { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
@@ -40,6 +41,13 @@ function getPageMeta(pathname: string) {
     return {
       title: "Revenue Signal",
       description: "Watch commercial trends, product mix, and client momentum in one place.",
+    };
+  }
+
+  if (pathname.startsWith("/admin/emails")) {
+    return {
+      title: "Email Campaigns",
+      description: "Launch branded campaigns to all clients or send personalized outreach to one recipient.",
     };
   }
 

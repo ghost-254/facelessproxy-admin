@@ -77,6 +77,13 @@ export default async function AdminDashboardPage() {
                 variant="outline"
                 className="rounded-2xl border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
               >
+                <Link href="/admin/emails">Launch campaigns</Link>
+              </Button>
+              <Button
+                asChild
+                variant="outline"
+                className="rounded-2xl border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white"
+              >
                 <Link href="/admin/analytics">Review analytics</Link>
               </Button>
             </div>

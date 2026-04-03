@@ -10,6 +10,118 @@ import type { AdminClient, AdminOrderDetail, AdminOrderSummary, AnalyticsOvervie
 type FirestoreRecord = Record<string, unknown>;
 const ADMIN_ORDERS_TAG = "admin-orders";
 const ADMIN_CLIENTS_TAG = "admin-clients";
+const UNKNOWN_CLIENT_EMAIL = "no-email@unknown.com";
+const EMPTY_EMAIL_LOOKUP = new Map<string, string>();
+const RUNTIME_ORDERS_CACHE_KEY = "runtime:admin-orders:all";
+const RUNTIME_CLIENTS_CACHE_KEY = "runtime:admin-clients:all";
+const parsedRuntimeCacheTtlSeconds = Number(process.env.ADMIN_RUNTIME_CACHE_TTL_SECONDS || 900);
+const RUNTIME_CACHE_TTL_SECONDS = Number.isFinite(parsedRuntimeCacheTtlSeconds)
+  ? Math.max(parsedRuntimeCacheTtlSeconds, 60)
+  : 900;
+const RUNTIME_CACHE_TTL_MS = RUNTIME_CACHE_TTL_SECONDS * 1000;
+const USER_ID_FIELDS = [
+  "uid",
+  "userId",
+  "userID",
+  "userUid",
+  "userUID",
+  "user_id",
+  "authUid",
+  "clientId",
+  "clientID",
+  "client_id",
+  "customerId",
+  "customerID",
+  "customer_id",
+  "ownerId",
+  "owner_id",
+  "accountId",
+  "account_id",
+  "userDocId",
+  "userDocID",
+  "documentId",
+];
+const USER_REFERENCE_FIELDS = ["user", "client", "customer", "userRef", "clientRef", "customerRef", "account"];
+
+type RuntimeCacheEntry<T> = {
+  value: T;
+  fetchedAt: number;
+  expiresAt: number;
+};
+
+const runtimeCache = new Map<string, RuntimeCacheEntry<unknown>>();
+const runtimeInflight = new Map<string, Promise<unknown>>();
+
+function getRuntimeCachedValue<T>(cacheKey: string) {
+  const entry = runtimeCache.get(cacheKey) as RuntimeCacheEntry<T> | undefined;
+  if (!entry) {
+    return null;
+  }
+
+  if (entry.expiresAt <= Date.now()) {
+    return null;
+  }
+
+  return entry.value;
+}
+
+function getRuntimeStaleValue<T>(cacheKey: string) {
+  const entry = runtimeCache.get(cacheKey) as RuntimeCacheEntry<T> | undefined;
+  return entry?.value ?? null;
+}
+
+function setRuntimeCachedValue<T>(cacheKey: string, value: T, ttlMs = RUNTIME_CACHE_TTL_MS) {
+  const now = Date.now();
+  runtimeCache.set(cacheKey, {
+    value,
+    fetchedAt: now,
+    expiresAt: now + ttlMs,
+  });
+}
+
+function clearRuntimeCache(cacheKey: string) {
+  runtimeCache.delete(cacheKey);
+  runtimeInflight.delete(cacheKey);
+}
+
+async function loadWithRuntimeCache<T>(
+  cacheKey: string,
+  loader: () => Promise<T>,
+  options: { forceRefresh?: boolean } = {},
+) {
+  if (!options.forceRefresh) {
+    const cachedValue = getRuntimeCachedValue<T>(cacheKey);
+    if (cachedValue) {
+      return cachedValue;
+    }
+  }
+
+  const existingInflight = runtimeInflight.get(cacheKey) as Promise<T> | undefined;
+  if (existingInflight) {
+    return existingInflight;
+  }
+
+  const pendingLoad = (async () => {
+    try {
+      const loadedValue = await loader();
+      setRuntimeCachedValue(cacheKey, loadedValue);
+      return loadedValue;
+    } catch (error) {
+      const staleValue = getRuntimeStaleValue<T>(cacheKey);
+      if (staleValue) {
+        console.error(`Falling back to stale runtime cache for ${cacheKey}:`, error);
+        return staleValue;
+      }
+
+      throw error;
+    } finally {
+      runtimeInflight.delete(cacheKey);
+    }
+  })();
+
+  runtimeInflight.set(cacheKey, pendingLoad as Promise<unknown>);
+  return pendingLoad;
+}
 
 function collection(name: string) {
   return getAdminDb().collection(name);
@@ -86,6 +198,188 @@ function percentage(part: number, total: number) {
 
 function sanitizeText(value: unknown) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function getPathTail(value: string) {
+  const segments = value.split("/").filter(Boolean);
+  return segments.length > 1 ? (segments.at(-1) ?? null) : null;
+}
+
+function extractUserId(value: unknown) {
+  const direct = sanitizeText(value);
+  if (direct) {
+    return getPathTail(direct) ?? direct;
+  }
+
+  if (!isPlainObject(value)) {
+    return null;
+  }
+
+  const objectCandidates = [
+    value.id,
+    value.uid,
+    value.userId,
+    value.userID,
+    value.userUid,
+    value.userUID,
+    value.user_id,
+    value.authUid,
+    value.clientId,
+    value.clientID,
+    value.client_id,
+    value.customerId,
+    value.customerID,
+    value.customer_id,
+    value.ownerId,
+    value.owner_id,
+    value.accountId,
+    value.account_id,
+    value.path,
+    value.docId,
+    value.userDocId,
+    value.userDocID,
+    value.documentId,
+  ];
+
+  for (const candidate of objectCandidates) {
+    const text = sanitizeText(candidate);
+    if (text) {
+      return getPathTail(text) ?? text;
+    }
+  }
+
+  return null;
+}
+
+function getKnownEmail(data: FirestoreRecord) {
+  const orderDetails = isPlainObject(data.orderDetails) ? data.orderDetails : null;
+  const customer = isPlainObject(data.customer) ? data.customer : null;
+  const user = isPlainObject(data.user) ? data.user : null;
+  const profile = isPlainObject(data.profile) ? data.profile : null;
+  const account = isPlainObject(data.account) ? data.account : null;
+
+  const candidates = [
+    data.email,
+    data.userEmail,
+    data.customerEmail,
+    orderDetails?.email,
+    orderDetails?.userEmail,
+    orderDetails?.customerEmail,
+    customer?.email,
+    user?.email,
+    profile?.email,
+    account?.email,
+  ];
+
+  for (const candidate of candidates) {
+    const email = sanitizeText(candidate);
+    if (email) {
+      return email;
+    }
+  }
+
+  return null;
+}
+
+function collectUserIdCandidates(data: FirestoreRecord) {
+  const orderDetails = isPlainObject(data.orderDetails) ? data.orderDetails : null;
+  const candidates = new Set<string>();
+
+  for (const key of USER_ID_FIELDS) {
+    const topLevelCandidate = extractUserId(data[key]);
+    if (topLevelCandidate) {
+      candidates.add(topLevelCandidate);
+    }
+
+    if (orderDetails) {
+      const nestedCandidate = extractUserId(orderDetails[key]);
+      if (nestedCandidate) {
+        candidates.add(nestedCandidate);
+      }
+    }
+  }
+
+  for (const key of USER_REFERENCE_FIELDS) {
+    const topLevelReferenceCandidate = extractUserId(data[key]);
+    if (topLevelReferenceCandidate) {
+      candidates.add(topLevelReferenceCandidate);
+    }
+
+    if (orderDetails) {
+      const nestedReferenceCandidate = extractUserId(orderDetails[key]);
+      if (nestedReferenceCandidate) {
+        candidates.add(nestedReferenceCandidate);
+      }
+    }
+  }
+
+  return [...candidates];
+}
+
+function chunkArray<T>(items: T[], chunkSize: number) {
+  const chunks: T[][] = [];
+
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+async function buildClientEmailLookupFromUserIds(userIds: string[]) {
+  const normalizedUserIds = [...new Set(userIds.map((userId) => sanitizeText(userId)).filter(Boolean))];
+  if (normalizedUserIds.length === 0) {
+    return EMPTY_EMAIL_LOOKUP;
+  }
+
+  const db = getAdminDb();
+  const lookup = new Map<string, string>();
+  const userCollection = collection("users");
+
+  for (const userIdChunk of chunkArray(normalizedUserIds, 250)) {
+    const references = userIdChunk.map((userId) => userCollection.doc(userId));
+    const snapshots = await db.getAll(...references);
+
+    for (const snapshot of snapshots) {
+      if (!snapshot.exists) {
+        continue;
+      }
+
+      const email = getKnownEmail(snapshot.data() as FirestoreRecord);
+      if (!email) {
+        continue;
+      }
+
+      lookup.set(snapshot.id, email);
+      lookup.set(snapshot.id.toLowerCase(), email);
+    }
+  }
+
+  return lookup;
+}
+
+async function buildClientEmailLookupFromOrders(orderRecords: FirestoreRecord[]) {
+  const userIds = new Set<string>();
+
+  for (const orderRecord of orderRecords) {
+    for (const userId of collectUserIdCandidates(orderRecord)) {
+      const normalizedUserId = sanitizeText(userId);
+      if (normalizedUserId) {
+        userIds.add(normalizedUserId);
+      }
+    }
+  }
+
+  return buildClientEmailLookupFromUserIds([...userIds]);
+}
+
+function lookupClientEmail(clientEmailLookup: Map<string, string>, userId: string) {
+  const normalizedUserId = sanitizeText(userId);
+  if (!normalizedUserId) {
+    return null;
+  }
+
+  return clientEmailLookup.get(normalizedUserId) || clientEmailLookup.get(normalizedUserId.toLowerCase()) || null;
 }
 
 function getAmount(data: FirestoreRecord) {
@@ -182,9 +476,21 @@ function getQuantityLabel(data: FirestoreRecord) {
   return "Custom";
 }
 
-function getCustomerEmail(data: FirestoreRecord) {
-  const candidate = data.email || data.userEmail || data.customerEmail;
-  return typeof candidate === "string" && candidate.trim() ? candidate : null;
+function getCustomerEmail(data: FirestoreRecord, clientEmailLookup: Map<string, string>) {
+  const knownEmail = getKnownEmail(data);
+  if (knownEmail) {
+    return knownEmail;
+  }
+
+  const userIds = collectUserIdCandidates(data);
+  for (const userId of userIds) {
+    const email = lookupClientEmail(clientEmailLookup, userId);
+    if (email) {
+      return email;
+    }
+  }
+
+  return null;
 }
 
 function sortByDateDesc<T extends { createdAt: string | null }>(items: T[]) {
@@ -195,7 +501,7 @@ function sortByDateDesc<T extends { createdAt: string | null }>(items: T[]) {
   });
 }
 
-function normalizeOrderRecord(id: string, rawData: FirestoreRecord): AdminOrderSummary {
+function normalizeOrderRecord(id: string, rawData: FirestoreRecord, clientEmailLookup: Map<string, string> = EMPTY_EMAIL_LOOKUP): AdminOrderSummary {
   const createdAt = toIsoString(rawData.createdAt || rawData.fulfilledAt || rawData.updatedAt);
 
   return {
@@ -206,7 +512,7 @@ function normalizeOrderRecord(id: string, rawData: FirestoreRecord): AdminOrderS
     amount: getAmount(rawData),
     paymentMethod: sanitizeText(rawData.paymentMethod) || "Manual",
     createdAt,
-    customerEmail: getCustomerEmail(rawData),
+    customerEmail: getCustomerEmail(rawData, clientEmailLookup),
     isSpecialProxy: Boolean(
       rawData.isSpecialProxy || (isPlainObject(rawData.orderDetails) ? rawData.orderDetails.isSpecialProxy : false),
     ),
@@ -216,8 +522,8 @@ function normalizeOrderRecord(id: string, rawData: FirestoreRecord): AdminOrderS
   };
 }
 
-function normalizeOrderDetail(id: string, rawData: FirestoreRecord): AdminOrderDetail {
-  const summary = normalizeOrderRecord(id, rawData);
+function normalizeOrderDetail(id: string, rawData: FirestoreRecord, clientEmailLookup: Map<string, string> = EMPTY_EMAIL_LOOKUP): AdminOrderDetail {
+  const summary = normalizeOrderRecord(id, rawData, clientEmailLookup);
 
   return {
     ...summary,
@@ -228,21 +534,28 @@ function normalizeOrderDetail(id: string, rawData: FirestoreRecord): AdminOrderD
 function normalizeClientRecord(id: string, rawData: FirestoreRecord): AdminClient {
   return {
     id,
-    email: sanitizeText(rawData.email) || "no-email@unknown.com",
+    email: getKnownEmail(rawData) || UNKNOWN_CLIENT_EMAIL,
     createdAt: toIsoString(rawData.createdAt),
     lastMessaged: toIsoString(rawData.lastMessaged),
   };
 }
 
+async function fetchOrdersFromFirestore() {
+  const snapshot = await collection("orders").get();
+  const orderRecords = snapshot.docs.map((doc) => ({
+    id: doc.id,
+    data: doc.data() as FirestoreRecord,
+  }));
+  const clientEmailLookup = await buildClientEmailLookupFromOrders(orderRecords.map((entry) => entry.data));
+  const orders = orderRecords.map((record) => normalizeOrderRecord(record.id, record.data, clientEmailLookup));
+  return sortByDateDesc(orders);
+}
+
 const getAllOrdersCached = unstable_cache(
-  async () => {
-    const snapshot = await collection("orders").get();
-    const orders = snapshot.docs.map((doc) => normalizeOrderRecord(doc.id, doc.data() as FirestoreRecord));
-    return sortByDateDesc(orders);
-  },
+  async () => loadWithRuntimeCache(RUNTIME_ORDERS_CACHE_KEY, fetchOrdersFromFirestore),
   ["admin-orders-all"],
   {
-    revalidate: 60,
+    revalidate: RUNTIME_CACHE_TTL_SECONDS,
     tags: [ADMIN_ORDERS_TAG],
   },
 );
@@ -252,9 +565,7 @@ export async function getAllOrders() {
 }
 
 export async function getFreshOrders() {
-  const snapshot = await collection("orders").get();
-  const orders = snapshot.docs.map((doc) => normalizeOrderRecord(doc.id, doc.data() as FirestoreRecord));
-  return sortByDateDesc(orders);
+  return loadWithRuntimeCache(RUNTIME_ORDERS_CACHE_KEY, fetchOrdersFromFirestore, { forceRefresh: true });
 }
 
 export async function getOrderById(orderId: string) {
@@ -264,11 +575,14 @@ export async function getOrderById(orderId: string) {
     return null;
   }
 
-  return normalizeOrderDetail(snapshot.id, snapshot.data() as FirestoreRecord);
+  const rawRecord = snapshot.data() as FirestoreRecord;
+  const clientEmailLookup = await buildClientEmailLookupFromUserIds(collectUserIdCandidates(rawRecord));
+  return normalizeOrderDetail(snapshot.id, rawRecord, clientEmailLookup);
 }
 
 export async function deleteOrderById(orderId: string) {
   await collection("orders").doc(orderId).delete();
+  clearRuntimeCache(RUNTIME_ORDERS_CACHE_KEY);
   revalidateTag(ADMIN_ORDERS_TAG, "max");
 }
 
@@ -306,6 +620,7 @@ export async function fulfillOrder(orderId: string, payload: StandardFulfillment
       fulfilledAt: FieldValue.serverTimestamp(),
     });
 
+    clearRuntimeCache(RUNTIME_ORDERS_CACHE_KEY);
     revalidateTag(ADMIN_ORDERS_TAG, "max");
     return;
   }
@@ -331,18 +646,21 @@ export async function fulfillOrder(orderId: string, payload: StandardFulfillment
     fulfilledAt: FieldValue.serverTimestamp(),
   });
 
+  clearRuntimeCache(RUNTIME_ORDERS_CACHE_KEY);
   revalidateTag(ADMIN_ORDERS_TAG, "max");
 }
 
+async function fetchClientsFromFirestore() {
+  const snapshot = await collection("users").get();
+  const clients = snapshot.docs.map((doc) => normalizeClientRecord(doc.id, doc.data() as FirestoreRecord));
+  return sortByDateDesc(clients);
+}
+
 const getAllClientsCached = unstable_cache(
-  async () => {
-    const snapshot = await collection("users").get();
-    const clients = snapshot.docs.map((doc) => normalizeClientRecord(doc.id, doc.data() as FirestoreRecord));
-    return sortByDateDesc(clients);
-  },
+  async () => loadWithRuntimeCache(RUNTIME_CLIENTS_CACHE_KEY, fetchClientsFromFirestore),
   ["admin-clients-all"],
   {
-    revalidate: 60,
+    revalidate: RUNTIME_CACHE_TTL_SECONDS,
     tags: [ADMIN_CLIENTS_TAG],
   },
 );
@@ -384,6 +702,7 @@ export async function recordClientOutreach(clientIds: string[], subject: string,
   });
 
   await batch.commit();
+  clearRuntimeCache(RUNTIME_CLIENTS_CACHE_KEY);
   revalidateTag(ADMIN_CLIENTS_TAG, "max");
 }
 
