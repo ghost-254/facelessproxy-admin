@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Eye, Search, Trash2 } from "lucide-react";
+import { Eye, Mail, Search, Trash2 } from "lucide-react";
 
 import type { AdminOrderSummary } from "@/lib/admin/types";
 import { Badge } from "@/components/ui/badge";
@@ -64,6 +64,7 @@ export default function OrdersConsole({ initialOrders }: OrdersConsoleProps) {
   const [paymentFilter, setPaymentFilter] = useState("all");
   const [page, setPage] = useState(1);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [resendingOrderId, setResendingOrderId] = useState<string | null>(null);
   const [activeOrder, setActiveOrder] = useState<AdminOrderSummary | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<AdminOrderSummary | null>(null);
 
@@ -139,6 +140,46 @@ export default function OrdersConsole({ initialOrders }: OrdersConsoleProps) {
 
   function openFulfillment(order: AdminOrderSummary) {
     router.push(order.isSpecialProxy ? `/admin/orders/fulfill-special-proxy?id=${order.id}` : `/admin/orders/fulfill-order?id=${order.id}`);
+  }
+
+  async function handleResendFulfillmentNotice(order: AdminOrderSummary) {
+    const isFulfilled = order.status === "fulfilled" || order.paymentStatus === "fulfilled";
+    if (!isFulfilled) {
+      toast({
+        title: "Order not fulfilled yet",
+        description: "Fulfill this order first before resending the fulfillment notice.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setResendingOrderId(order.id);
+
+    try {
+      const response = await fetch(`/api/admin/orders/${order.id}/resend-fulfillment-notice`, {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; recipientEmail?: string };
+
+      if (!response.ok) {
+        throw new Error(payload.error || "Unable to resend fulfillment notice.");
+      }
+
+      toast({
+        title: "Fulfillment notice sent",
+        description: payload.recipientEmail
+          ? `Resent to ${payload.recipientEmail}.`
+          : "The fulfillment email was resent successfully.",
+      });
+    } catch (error) {
+      toast({
+        title: "Resend failed",
+        description: error instanceof Error ? error.message : "Unable to resend fulfillment notice.",
+        variant: "destructive",
+      });
+    } finally {
+      setResendingOrderId(null);
+    }
   }
 
   return (
@@ -310,6 +351,15 @@ export default function OrdersConsole({ initialOrders }: OrdersConsoleProps) {
                       </Button>
                       <Button variant="outline" className="rounded-2xl" onClick={() => openFulfillment(order)}>
                         Fulfill
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="rounded-2xl"
+                        onClick={() => handleResendFulfillmentNotice(order)}
+                        disabled={resendingOrderId === order.id || !(order.status === "fulfilled" || order.paymentStatus === "fulfilled")}
+                      >
+                        <Mail className="mr-2 h-4 w-4" />
+                        {resendingOrderId === order.id ? "Sending..." : "Resend Notice"}
                       </Button>
                       <Button
                         variant="ghost"

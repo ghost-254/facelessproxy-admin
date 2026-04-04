@@ -484,6 +484,65 @@ function locationSortWeight(key: string) {
   return match ? Number(match[0]) : Number.MAX_SAFE_INTEGER;
 }
 
+function getFulfillmentProxyLinesFromOrderData(rawData: FirestoreRecord) {
+  if (Array.isArray(rawData.proxyList)) {
+    return rawData.proxyList
+      .map((entry) => (typeof entry === "string" ? normalizeProxyLine(entry) : ""))
+      .filter(Boolean);
+  }
+
+  if (isPlainObject(rawData.proxyDetails)) {
+    const proxyDetailsRecord = rawData.proxyDetails as FirestoreRecord;
+    const sortedKeys = Object.keys(proxyDetailsRecord).sort((left, right) => locationSortWeight(left) - locationSortWeight(right));
+    return sortedKeys
+      .map((key) => {
+        const details = proxyDetailsRecord[key];
+        if (!isPlainObject(details)) {
+          return "";
+        }
+
+        const hostname = sanitizeText(details.ip);
+        const port = sanitizeText(details.port);
+        const login = sanitizeText(details.username);
+        const password = sanitizeText(details.password);
+
+        if (!hostname || !port || !login) {
+          return "";
+        }
+
+        return toOrderFulfillmentProxyLine(hostname, port, login, password);
+      })
+      .filter(Boolean);
+  }
+
+  return [];
+}
+
+async function sendOrderFulfillmentNoticeEmail(orderId: string, rawData: FirestoreRecord) {
+  const recipientEmail = await resolveCustomerEmailForOrder(rawData);
+  if (!recipientEmail) {
+    throw new Error("Customer email is missing for this order.");
+  }
+
+  const renderedEmail = renderOrderFulfillmentEmail({
+    recipientName: getKnownName(rawData),
+    recipientEmail,
+    orderId,
+    proxyLines: getFulfillmentProxyLinesFromOrderData(rawData),
+    supportEmail: getSupportEmailContact(),
+    dashboardUrl: getClientDashboardUrl(),
+  });
+
+  await sendEmail({
+    to: recipientEmail,
+    subject: renderedEmail.subject,
+    text: renderedEmail.text,
+    html: renderedEmail.html,
+  });
+
+  return recipientEmail;
+}
+
 function getAmount(data: FirestoreRecord) {
   const value =
     data.totalAmount ??
@@ -718,13 +777,11 @@ export async function fulfillOrder(orderId: string, payload: StandardFulfillment
 
   const existingData = existingSnapshot.data() as FirestoreRecord;
   const wasFulfilledAlready = getStatus(existingData) === "fulfilled" || Boolean(toDateValue(existingData.fulfilledAt));
-  let fulfillmentProxyLines: string[] = [];
 
   if (payload.mode === "special") {
     const sanitizedProxyList = payload.proxyList
       .map((entry) => entry.trim())
       .filter(Boolean);
-    fulfillmentProxyLines = sanitizedProxyList.map((entry) => normalizeProxyLine(entry)).filter(Boolean);
 
     await orderRef.update({
       status: "fulfilled",
@@ -744,17 +801,6 @@ export async function fulfillOrder(orderId: string, payload: StandardFulfillment
         },
       ]),
     );
-    const orderedKeys = Object.keys(sanitizedProxyDetails).sort((left, right) => locationSortWeight(left) - locationSortWeight(right));
-    fulfillmentProxyLines = orderedKeys
-      .map((key) => {
-        const details = sanitizedProxyDetails[key];
-        if (!details.ip || !details.port || !details.username) {
-          return "";
-        }
-
-        return toOrderFulfillmentProxyLine(details.ip, details.port, details.username, details.password);
-      })
-      .filter(Boolean);
 
     await orderRef.update({
       status: "fulfilled",
@@ -770,31 +816,30 @@ export async function fulfillOrder(orderId: string, payload: StandardFulfillment
 
   if (!wasFulfilledAlready) {
     try {
-      const recipientEmail = await resolveCustomerEmailForOrder(existingData);
-      if (!recipientEmail) {
-        console.error(`Fulfillment email skipped for ${orderId}: customer email is missing.`);
-        return;
-      }
-
-      const renderedEmail = renderOrderFulfillmentEmail({
-        recipientName: getKnownName(existingData),
-        recipientEmail,
-        orderId,
-        proxyLines: fulfillmentProxyLines,
-        supportEmail: getSupportEmailContact(),
-        dashboardUrl: getClientDashboardUrl(),
-      });
-
-      await sendEmail({
-        to: recipientEmail,
-        subject: renderedEmail.subject,
-        text: renderedEmail.text,
-        html: renderedEmail.html,
-      });
+      const refreshedSnapshot = await orderRef.get();
+      const orderDataForEmail = refreshedSnapshot.exists ? (refreshedSnapshot.data() as FirestoreRecord) : existingData;
+      await sendOrderFulfillmentNoticeEmail(orderId, orderDataForEmail);
     } catch (error) {
       console.error(`Fulfillment email send failed for ${orderId}:`, error);
     }
   }
+}
+
+export async function resendOrderFulfillmentNotice(orderId: string) {
+  const orderSnapshot = await collection("orders").doc(orderId).get();
+
+  if (!orderSnapshot.exists) {
+    throw new Error("Order not found.");
+  }
+
+  const rawData = orderSnapshot.data() as FirestoreRecord;
+  const isFulfilled = getStatus(rawData) === "fulfilled" || Boolean(toDateValue(rawData.fulfilledAt));
+  if (!isFulfilled) {
+    throw new Error("This order is not fulfilled yet. Fulfill the order before resending the notice email.");
+  }
+
+  const recipientEmail = await sendOrderFulfillmentNoticeEmail(orderId, rawData);
+  return { recipientEmail };
 }
 
 async function fetchClientsFromFirestore() {
